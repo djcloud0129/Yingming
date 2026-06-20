@@ -8,6 +8,18 @@ from typing import Any
 from uuid import uuid4
 
 
+MEMORY_CATEGORIES = (
+    "identity",
+    "preference",
+    "learning",
+    "habit",
+    "project",
+    "persona",
+    "relationship",
+    "manual",
+)
+
+
 @dataclass(frozen=True)
 class MemoryItem:
     id: str
@@ -25,10 +37,22 @@ class MemoryStore:
             self.path.write_text(json.dumps(default_memory(), ensure_ascii=False, indent=2), encoding="utf-8")
 
     def load(self) -> dict[str, Any]:
-        return json.loads(self.path.read_text(encoding="utf-8"))
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        changed = self.ensure_shape(data)
+        if changed:
+            self.save(data)
+        return data
 
     def save(self, data: dict[str, Any]) -> None:
         self.path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def ensure_shape(self, data: dict[str, Any]) -> bool:
+        changed = False
+        for key, default in (("long_term", []), ("pending", []), ("boundaries", [])):
+            if key not in data or not isinstance(data.get(key), list):
+                data[key] = default.copy()
+                changed = True
+        return changed
 
     def add(self, text: str, category: str = "manual", source: str = "chat") -> MemoryItem:
         text = text.strip()
@@ -46,6 +70,108 @@ class MemoryStore:
         data.setdefault("long_term", []).append(item.__dict__)
         self.save(data)
         return item
+
+    def add_pending(self, text: str, category: str = "manual", source: str = "auto_chat") -> MemoryItem:
+        text = text.strip()
+        if not text:
+            raise ValueError("待确认记忆内容不能为空。")
+
+        data = self.load()
+        item = MemoryItem(
+            id=f"pend_{uuid4().hex[:10]}",
+            category=normalize_category(category),
+            text=text,
+            source=source,
+            created_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        data.setdefault("pending", []).append(item.__dict__)
+        self.save(data)
+        return item
+
+    def update(self, memory_id: str, text: str, category: str) -> dict[str, Any]:
+        data = self.load()
+        index = self.find_index(data.get("long_term", []), memory_id)
+        if index == -1:
+            raise ValueError("没有找到这条长期记忆。")
+
+        text = text.strip()
+        if not text:
+            raise ValueError("记忆内容不能为空。")
+
+        item = data["long_term"][index]
+        item["text"] = text
+        item["category"] = normalize_category(category)
+        item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self.save(data)
+        return item
+
+    def delete(self, memory_id: str) -> dict[str, Any]:
+        data = self.load()
+        memories = data.get("long_term", [])
+        index = self.find_index(memories, memory_id)
+        if index == -1:
+            raise ValueError("没有找到这条长期记忆。")
+        item = memories.pop(index)
+        self.save(data)
+        return item
+
+    def update_pending(self, pending_id: str, text: str, category: str) -> dict[str, Any]:
+        data = self.load()
+        index = self.find_index(data.get("pending", []), pending_id)
+        if index == -1:
+            raise ValueError("没有找到这条待确认记忆。")
+
+        text = text.strip()
+        if not text:
+            raise ValueError("待确认记忆内容不能为空。")
+
+        item = data["pending"][index]
+        item["text"] = text
+        item["category"] = normalize_category(category)
+        item["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self.save(data)
+        return item
+
+    def confirm_pending(self, pending_id: str, text: str | None = None, category: str | None = None) -> MemoryItem:
+        data = self.load()
+        pending = data.get("pending", [])
+        index = self.find_index(pending, pending_id)
+        if index == -1:
+            raise ValueError("没有找到这条待确认记忆。")
+
+        pending_item = pending.pop(index)
+        final_text = (text if text is not None else str(pending_item.get("text", ""))).strip()
+        if not final_text:
+            raise ValueError("记忆内容不能为空。")
+
+        item = MemoryItem(
+            id=f"mem_{uuid4().hex[:10]}",
+            category=normalize_category(category or str(pending_item.get("category", "manual"))),
+            text=final_text,
+            source="confirmed_" + str(pending_item.get("source", "pending")),
+            created_at=datetime.now().isoformat(timespec="seconds"),
+        )
+        item_data = item.__dict__.copy()
+        item_data["suggested_at"] = pending_item.get("created_at", "")
+        data.setdefault("long_term", []).append(item_data)
+        self.save(data)
+        return item
+
+    def discard_pending(self, pending_id: str) -> dict[str, Any]:
+        data = self.load()
+        pending = data.get("pending", [])
+        index = self.find_index(pending, pending_id)
+        if index == -1:
+            raise ValueError("没有找到这条待确认记忆。")
+        item = pending.pop(index)
+        self.save(data)
+        return item
+
+    def find_index(self, items: list[Any], item_id: str) -> int:
+        for index, item in enumerate(items):
+            if isinstance(item, dict) and item.get("id") == item_id:
+                return index
+        return -1
 
     def as_prompt_text(self) -> str:
         data = self.load()
@@ -119,6 +245,7 @@ def default_memory() -> dict[str, Any]:
                 "created_at": "2026-06-19T00:00:00",
             },
         ],
+        "pending": [],
         "boundaries": [
             "樱茗不能假装自己是人类；如果被问到身份，应坦诚自己是 AI。",
             "樱茗可以亲近、体贴和陪伴，但不要制造依赖或替用户做重大人生决定。",
@@ -126,3 +253,7 @@ def default_memory() -> dict[str, Any]:
         ],
     }
 
+
+def normalize_category(category: str) -> str:
+    text = category.strip().lower()
+    return text if text in MEMORY_CATEGORIES else "manual"

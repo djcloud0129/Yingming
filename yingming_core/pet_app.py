@@ -9,6 +9,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
+from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
 from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
 
@@ -275,6 +276,7 @@ class YingmingPetApp:
                     "ok": True,
                     "reply": result["reply"],
                     "memories_added": result.get("memories_added", []),
+                    "memory_suggestions": result.get("memory_suggestions", []),
                 }
             )
         except Exception as exc:  # noqa: BLE001 - show local prototype errors in UI.
@@ -292,8 +294,11 @@ class YingmingPetApp:
         if result["ok"]:
             reply = result["reply"]
             memories_added = result.get("memories_added", [])
+            memory_suggestions = result.get("memory_suggestions", [])
             if memories_added:
                 reply = f"{reply}\n\n（我整理了 {len(memories_added)} 条新的长期记忆。）"
+            if memory_suggestions:
+                reply = f"{reply}\n\n（我整理了 {len(memory_suggestions)} 条待确认记忆，点“记忆体”确认。）"
             self.set_bubble(reply)
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
@@ -310,51 +315,144 @@ class YingmingPetApp:
 
     def ask_memory(self) -> None:
         window = tk.Toplevel(self.root)
-        window.title("记忆体")
-        window.geometry("520x520+760+180")
+        window.title("记忆体管理器")
+        window.geometry("720x660+650+120")
+        window.minsize(720, 660)
+        window.resizable(True, True)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
 
+        state: dict[str, Any] = {
+            "kind": "",
+            "id": "",
+            "pending": [],
+            "memories": [],
+        }
+
+        shell = tk.Frame(window, bg="#f7f1e8", padx=12, pady=12)
+        shell.pack(fill="both", expand=True)
+        shell.rowconfigure(1, weight=1)
+        shell.columnconfigure(0, weight=1)
+
+        header = tk.Frame(shell, bg="#f7f1e8")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(1, weight=1)
+
         tk.Label(
-            window,
+            header,
             text="记忆体",
             bg="#f7f1e8",
             fg="#2d3230",
             font=("Microsoft YaHei UI", 14, "bold"),
-        ).pack(anchor="w", padx=12, pady=(12, 6))
+        ).grid(row=0, column=0, sticky="w")
 
-        memory_frame = tk.Frame(window, bg="#f7f1e8")
-        memory_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        count_label = tk.Label(
+            header,
+            text="",
+            bg="#f7f1e8",
+            fg="#6f7f56",
+            font=("Microsoft YaHei UI", 10),
+        )
+        count_label.grid(row=0, column=1, sticky="e")
 
-        memory_scrollbar = tk.Scrollbar(memory_frame, orient="vertical")
-        memory_view = tk.Text(
-            memory_frame,
-            height=12,
-            wrap="word",
+        body = tk.Frame(shell, bg="#f7f1e8")
+        body.grid(row=1, column=0, sticky="nsew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=2)
+        body.columnconfigure(1, weight=3)
+
+        lists = tk.Frame(body, bg="#f7f1e8")
+        lists.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
+        lists.rowconfigure(1, weight=1)
+        lists.rowconfigure(3, weight=2)
+        lists.columnconfigure(0, weight=1)
+
+        tk.Label(
+            lists,
+            text="待确认",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).grid(row=0, column=0, sticky="w", pady=(0, 4))
+
+        pending_frame = tk.Frame(lists, bg="#f7f1e8")
+        pending_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 10))
+        pending_frame.rowconfigure(0, weight=1)
+        pending_frame.columnconfigure(0, weight=1)
+
+        pending_scrollbar = tk.Scrollbar(pending_frame, orient="vertical")
+        pending_list = tk.Listbox(
+            pending_frame,
+            height=7,
             bg="#fff8f6",
             fg="#2d3230",
             relief="solid",
             bd=1,
-            padx=10,
-            pady=10,
+            activestyle="none",
             font=("Microsoft YaHei UI", 10),
-            yscrollcommand=memory_scrollbar.set,
+            yscrollcommand=pending_scrollbar.set,
         )
-        memory_scrollbar.configure(command=memory_view.yview)
-        memory_scrollbar.pack(side="right", fill="y")
-        memory_view.pack(side="left", fill="both", expand=True)
+        pending_scrollbar.configure(command=pending_list.yview)
+        pending_list.grid(row=0, column=0, sticky="nsew")
+        pending_scrollbar.grid(row=0, column=1, sticky="ns")
 
         tk.Label(
-            window,
-            text="写入新记忆",
+            lists,
+            text="长期记忆",
             bg="#f7f1e8",
             fg="#2d3230",
             font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w", padx=12, pady=(0, 6))
+        ).grid(row=2, column=0, sticky="w", pady=(0, 4))
+
+        memory_frame = tk.Frame(lists, bg="#f7f1e8")
+        memory_frame.grid(row=3, column=0, sticky="nsew")
+        memory_frame.rowconfigure(0, weight=1)
+        memory_frame.columnconfigure(0, weight=1)
+
+        memory_scrollbar = tk.Scrollbar(memory_frame, orient="vertical")
+        memory_list = tk.Listbox(
+            memory_frame,
+            height=13,
+            bg="#fff8f6",
+            fg="#2d3230",
+            relief="solid",
+            bd=1,
+            activestyle="none",
+            font=("Microsoft YaHei UI", 10),
+            yscrollcommand=memory_scrollbar.set,
+        )
+        memory_scrollbar.configure(command=memory_list.yview)
+        memory_list.grid(row=0, column=0, sticky="nsew")
+        memory_scrollbar.grid(row=0, column=1, sticky="ns")
+
+        editor_panel = tk.Frame(body, bg="#f7f1e8")
+        editor_panel.grid(row=0, column=1, sticky="nsew")
+        editor_panel.rowconfigure(3, weight=1)
+        editor_panel.columnconfigure(0, weight=1)
+
+        selection_label = tk.Label(
+            editor_panel,
+            text="新记忆",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        selection_label.grid(row=0, column=0, sticky="w", pady=(0, 6))
+
+        category_var = tk.StringVar(value="manual")
+        category_menu = tk.OptionMenu(editor_panel, category_var, *MEMORY_CATEGORIES)
+        category_menu.configure(
+            bg="#fffaf2",
+            fg="#2d3230",
+            activebackground="#f2e8dc",
+            relief="solid",
+            bd=1,
+            font=("Microsoft YaHei UI", 10),
+        )
+        category_menu.grid(row=1, column=0, sticky="ew", pady=(0, 8))
 
         editor = tk.Text(
-            window,
-            height=5,
+            editor_panel,
             wrap="word",
             bg="#fffaf2",
             fg="#2d3230",
@@ -365,31 +463,166 @@ class YingmingPetApp:
             pady=10,
             font=("Microsoft YaHei UI", 10),
         )
-        editor.pack(fill="x", padx=12, pady=(0, 10))
+        editor.grid(row=3, column=0, sticky="nsew")
 
-        buttons = tk.Frame(window, bg="#f7f1e8")
-        buttons.pack(fill="x", padx=12, pady=(0, 12))
+        editor_scrollbar = tk.Scrollbar(editor_panel, orient="vertical", command=editor.yview)
+        editor.configure(yscrollcommand=editor_scrollbar.set)
+        editor_scrollbar.grid(row=3, column=1, sticky="ns")
 
-        def render() -> None:
-            memory_view.configure(state="normal")
-            memory_view.delete("1.0", "end")
-            memory_view.insert("1.0", self.service.memory.as_readable_text())
-            memory_view.configure(state="disabled")
-            memory_view.yview_moveto(0.0)
+        buttons = tk.Frame(shell, bg="#f7f1e8")
+        buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+        def item_title(item: dict[str, Any], index: int) -> str:
+            text = str(item.get("text", "")).replace("\n", " ").strip()
+            if len(text) > 36:
+                text = text[:36] + "..."
+            return f"{index}. [{item.get('category', 'manual')}] {text}"
+
+        def set_editor(text: str, category: str) -> None:
+            category_var.set(category if category in MEMORY_CATEGORIES else "manual")
+            editor.delete("1.0", "end")
+            editor.insert("1.0", text)
+
+        def clear_selection() -> None:
+            state["kind"] = ""
+            state["id"] = ""
+            pending_list.selection_clear(0, "end")
+            memory_list.selection_clear(0, "end")
+            selection_label.configure(text="新记忆")
+            set_editor("", "manual")
+
+        def render(keep_selection: bool = False) -> None:
+            old_kind = state["kind"] if keep_selection else ""
+            old_id = state["id"] if keep_selection else ""
+            data = self.service.memory.load()
+            state["pending"] = data.get("pending", [])
+            state["memories"] = data.get("long_term", [])
+            count_label.configure(text=f"待确认 {len(state['pending'])} 条 · 长期 {len(state['memories'])} 条")
+
+            pending_list.delete(0, "end")
+            for index, item in enumerate(state["pending"], start=1):
+                pending_list.insert("end", item_title(item, index))
+
+            memory_list.delete(0, "end")
+            for index, item in enumerate(state["memories"], start=1):
+                memory_list.insert("end", item_title(item, index))
+
+            state["kind"] = ""
+            state["id"] = ""
+            selection_label.configure(text="新记忆")
+            if old_kind == "pending":
+                for index, item in enumerate(state["pending"]):
+                    if item.get("id") == old_id:
+                        pending_list.selection_set(index)
+                        load_pending(index)
+                        return
+            if old_kind == "memory":
+                for index, item in enumerate(state["memories"]):
+                    if item.get("id") == old_id:
+                        memory_list.selection_set(index)
+                        load_memory(index)
+                        return
+            if not keep_selection:
+                clear_selection()
+
+        def load_pending(index: int) -> None:
+            if index < 0 or index >= len(state["pending"]):
+                return
+            item = state["pending"][index]
+            state["kind"] = "pending"
+            state["id"] = str(item.get("id", ""))
+            memory_list.selection_clear(0, "end")
+            selection_label.configure(text="待确认记忆")
+            set_editor(str(item.get("text", "")), str(item.get("category", "manual")))
+
+        def load_memory(index: int) -> None:
+            if index < 0 or index >= len(state["memories"]):
+                return
+            item = state["memories"][index]
+            state["kind"] = "memory"
+            state["id"] = str(item.get("id", ""))
+            pending_list.selection_clear(0, "end")
+            selection_label.configure(text="长期记忆")
+            set_editor(str(item.get("text", "")), str(item.get("category", "manual")))
+
+        def on_pending_select(_event: tk.Event[Any]) -> None:
+            selection = pending_list.curselection()
+            if selection:
+                load_pending(selection[0])
+
+        def on_memory_select(_event: tk.Event[Any]) -> None:
+            selection = memory_list.curselection()
+            if selection:
+                load_memory(selection[0])
+
+        def editor_text() -> str:
+            return editor.get("1.0", "end-1c").strip()
 
         def save() -> None:
-            text = editor.get("1.0", "end-1c").strip()
+            text = editor_text()
             if not text:
                 messagebox.showwarning("樱茗", "记忆内容不能为空。", parent=window)
                 return
             try:
-                self.service.remember(text, category="manual")
+                self.service.remember(text, category=category_var.get())
             except ValueError as exc:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
             self.set_bubble("好，我记住了。")
-            editor.delete("1.0", "end")
+            clear_selection()
             render()
+
+        def save_edit() -> None:
+            if not state["kind"] or not state["id"]:
+                messagebox.showwarning("樱茗", "请先选择一条记忆。", parent=window)
+                return
+            text = editor_text()
+            try:
+                if state["kind"] == "pending":
+                    self.service.update_pending_memory(state["id"], text, category_var.get())
+                else:
+                    self.service.update_memory(state["id"], text, category_var.get())
+            except ValueError as exc:
+                messagebox.showwarning("樱茗", str(exc), parent=window)
+                return
+            self.set_bubble("记忆已经改好了。")
+            render(keep_selection=True)
+
+        def confirm_pending() -> None:
+            if state["kind"] != "pending" or not state["id"]:
+                messagebox.showwarning("樱茗", "请先选择一条待确认记忆。", parent=window)
+                return
+            try:
+                self.service.confirm_pending_memory(state["id"], text=editor_text(), category=category_var.get())
+            except ValueError as exc:
+                messagebox.showwarning("樱茗", str(exc), parent=window)
+                return
+            self.set_bubble("好，这条已经进入长期记忆。")
+            clear_selection()
+            render()
+
+        def discard_pending() -> None:
+            if state["kind"] != "pending" or not state["id"]:
+                messagebox.showwarning("樱茗", "请先选择一条待确认记忆。", parent=window)
+                return
+            self.service.discard_pending_memory(state["id"])
+            self.set_bubble("这条建议已经忽略。")
+            clear_selection()
+            render()
+
+        def delete_memory() -> None:
+            if state["kind"] != "memory" or not state["id"]:
+                messagebox.showwarning("樱茗", "请先选择一条长期记忆。", parent=window)
+                return
+            if not messagebox.askyesno("樱茗", "要删除这条长期记忆吗？", parent=window):
+                return
+            self.service.delete_memory(state["id"])
+            self.set_bubble("这条长期记忆已经删除。")
+            clear_selection()
+            render()
+
+        pending_list.bind("<<ListboxSelect>>", on_pending_select)
+        memory_list.bind("<<ListboxSelect>>", on_memory_select)
 
         tk.Button(
             buttons,
@@ -417,7 +650,56 @@ class YingmingPetApp:
         ).pack(side="right", padx=(0, 8))
         tk.Button(
             buttons,
-            text="保存记忆",
+            text="删除长期",
+            command=delete_memory,
+            bg="#ffffff",
+            fg="#8a3b3b",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="忽略建议",
+            command=discard_pending,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="确认保存",
+            command=confirm_pending,
+            bg="#42523d",
+            fg="#ffffff",
+            activebackground="#526a7a",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="保存修改",
+            command=save_edit,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="新增长期",
             command=save,
             bg="#42523d",
             fg="#ffffff",
@@ -427,7 +709,7 @@ class YingmingPetApp:
             padx=14,
             pady=7,
             font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(side="right", padx=(0, 8))
+        ).pack(side="left")
 
         render()
         editor.focus_set()

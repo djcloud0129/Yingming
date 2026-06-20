@@ -76,18 +76,39 @@ class YingmingService:
 
         append_history(self.history_path, "user", user_text)
         append_history(self.history_path, "assistant", assistant_text)
-        added_memories = self.extract_memories_from_turn(user_text, assistant_text) if mode == "online" else []
+        memory_suggestions = self.suggest_memories_from_turn(user_text, assistant_text) if mode == "online" else []
 
         return {
             "reply": assistant_text,
             "mode": mode,
-            "memories_added": [item.__dict__ for item in added_memories],
+            "memories_added": [],
+            "memory_suggestions": [item.__dict__ for item in memory_suggestions],
             "history": load_recent_history(self.history_path, limit=80),
         }
 
     def remember(self, text: str, category: str = "manual") -> dict[str, Any]:
         item = self.memory.add(text, category=category or "manual", source="web")
         return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
+    def update_memory(self, memory_id: str, text: str, category: str) -> dict[str, Any]:
+        item = self.memory.update(memory_id, text, category)
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
+    def delete_memory(self, memory_id: str) -> dict[str, Any]:
+        item = self.memory.delete(memory_id)
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
+    def update_pending_memory(self, pending_id: str, text: str, category: str) -> dict[str, Any]:
+        item = self.memory.update_pending(pending_id, text, category)
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
+    def confirm_pending_memory(self, pending_id: str, text: str | None = None, category: str | None = None) -> dict[str, Any]:
+        item = self.memory.confirm_pending(pending_id, text=text, category=category)
+        return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
+    def discard_pending_memory(self, pending_id: str) -> dict[str, Any]:
+        item = self.memory.discard_pending(pending_id)
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
 
     def save_profile(self, text: str) -> dict[str, str]:
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,7 +134,7 @@ class YingmingService:
     def read_profile(self) -> str:
         return self.profile_path.read_text(encoding="utf-8") if self.profile_path.exists() else ""
 
-    def extract_memories_from_turn(self, user_text: str, assistant_text: str) -> list[Any]:
+    def suggest_memories_from_turn(self, user_text: str, assistant_text: str) -> list[Any]:
         if not self.client.available or not self.client.settings.auto_memory:
             return []
 
@@ -121,7 +142,8 @@ class YingmingService:
             {
                 "role": "system",
                 "content": (
-                    "你是樱茗的长期记忆整理器。只从用户明确表达的内容中提取稳定、可长期使用的信息。"
+                    "你是樱茗的长期记忆整理器。只从用户明确表达的内容中提取稳定、可长期使用的信息，"
+                    "这些信息会先进入待确认区，等待用户手动确认。"
                     "可以保存：称呼、学习目标、项目目标、偏好、希望被怎样帮助、反复出现的习惯。"
                     "不要保存：身份证/住址/电话/账号密钥、未经确认的敏感健康或财务信息、短暂情绪、"
                     "你自己的推测、助手说过但用户没有确认的内容。"
@@ -162,7 +184,10 @@ class YingmingService:
         added = []
         existing_texts = {
             str(item.get("text", "")).strip()
-            for item in self.memory.load().get("long_term", [])
+            for item in [
+                *self.memory.load().get("long_term", []),
+                *self.memory.load().get("pending", []),
+            ]
             if str(item.get("text", "")).strip()
         }
         for memory in memories[:MAX_AUTO_MEMORIES_PER_TURN]:
@@ -172,7 +197,7 @@ class YingmingService:
             if not text or text in existing_texts or len(text) > 240:
                 continue
             category = str(memory.get("category", "manual")).strip() or "manual"
-            added.append(self.memory.add(text, category=category, source="auto_chat"))
+            added.append(self.memory.add_pending(text, category=category, source="auto_chat"))
             existing_texts.add(text)
 
         return added

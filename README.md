@@ -86,7 +86,7 @@ start_pet.bat
 
 桌宠版会显示一个置顶小窗口，可以拖动、聊天、打开记忆体、连接 DeepSeek、编辑用户画像。收起后可以点 `展开` 恢复，也可以双击头像恢复；右键樱茗窗口可以展开聊天、连接 DeepSeek、切换置顶或退出。
 
-`记忆体` 会展示当前长期记忆，也可以继续手动写入。接入 DeepSeek 后，樱茗会在每轮聊天后尝试把你明确说出的稳定偏好、目标和项目线索整理进长期记忆；临时情绪、敏感隐私和助手自己的推测不会自动保存。
+`记忆体` 会展示待确认记忆和当前长期记忆。接入 DeepSeek 后，樱茗会在每轮聊天后尝试把你明确说出的稳定偏好、目标和项目线索整理成待确认记忆；你确认后才会进入长期记忆。记忆体里也可以新增、编辑、删除长期记忆，或忽略不想保存的建议。
 
 ## Windows exe
 
@@ -155,7 +155,7 @@ Get-Content .\data\profile_draft.md -Encoding UTF8
 
 - `personas/yingming.md`：樱茗的人设、语气和边界。
 - `data/profile.md`：你的个人画像，适合放稳定、经过确认的信息。
-- `data/memory.json`：长期记忆，适合放偏好、习惯、目标、专属梗。
+- `data/memory.json`：长期记忆和待确认记忆，适合放偏好、习惯、目标、专属梗。
 - `data/chat_history.jsonl`：本地聊天历史。
 - `data/local_settings.json`：本机模型连接设置，可能包含 API key，不会提交到 GitHub。
 - `imports/chatgpt/`：放 ChatGPT 导出文件。
