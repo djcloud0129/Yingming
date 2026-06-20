@@ -20,6 +20,14 @@ HELP_TEXT = """可用指令：
 """
 
 
+OFFLINE_HISTORY_MARKERS = (
+    "现在我还是离线模式",
+    "现在还没有配置模型 API",
+    "现在还是离线模式",
+    "模型那边暂时没有接上",
+)
+
+
 def run_chat(project_root: Path) -> None:
     persona_path = project_root / "personas" / "yingming.md"
     profile_path = project_root / "data" / "profile.md"
@@ -32,7 +40,7 @@ def run_chat(project_root: Path) -> None:
 
     client = OpenAICompatibleClient(project_root)
     offline = OfflineYingming()
-    recent_messages = load_recent_history(history_path, limit=12)
+    recent_messages = load_recent_history(history_path, limit=12, drop_offline_placeholders=client.available)
 
     print("樱茗：晚上好。我在这里。输入 /帮助 可以看指令，输入 /退出 就能结束。")
     if not client.available:
@@ -72,7 +80,14 @@ def run_chat(project_root: Path) -> None:
             print(f"樱茗：好，我记住了：{item.text}")
             continue
 
-        messages = build_messages(persona, profile, memory.as_prompt_text(), recent_messages, user_text)
+        messages = build_messages(
+            persona,
+            profile,
+            memory.as_prompt_text(),
+            recent_messages,
+            user_text,
+            active_model=client.settings.display_name if client.available else "",
+        )
         try:
             reply = client.complete(messages) if client.available else offline.complete(messages)
         except LLMError as exc:
@@ -85,7 +100,7 @@ def run_chat(project_root: Path) -> None:
         print(f"樱茗：{reply}")
         append_history(history_path, "user", user_text)
         append_history(history_path, "assistant", reply)
-        recent_messages = load_recent_history(history_path, limit=12)
+        recent_messages = load_recent_history(history_path, limit=12, drop_offline_placeholders=client.available)
 
 
 def build_messages(
@@ -94,6 +109,7 @@ def build_messages(
     memory_text: str,
     recent_messages: list[Message],
     user_text: str,
+    active_model: str = "",
 ) -> list[Message]:
     system = "\n\n".join(
         part
@@ -101,6 +117,12 @@ def build_messages(
             persona,
             "以下是已经确认的使用者画像：\n" + profile.strip() if profile.strip() else "",
             "以下是长期记忆与边界：\n" + memory_text if memory_text else "",
+            (
+                f"当前已经接入在线模型：{active_model}。"
+                "不要自称处于离线模式，也不要说回答会因为离线而朴素。"
+            )
+            if active_model
+            else "",
             "请优先使用中文。回答自然、温柔、具体，不要长篇说教。",
         ]
         if part
@@ -108,11 +130,11 @@ def build_messages(
     return [{"role": "system", "content": system}, *recent_messages, {"role": "user", "content": user_text}]
 
 
-def load_recent_history(path: Path, limit: int) -> list[Message]:
+def load_recent_history(path: Path, limit: int, drop_offline_placeholders: bool = False) -> list[Message]:
     if not path.exists():
         return []
 
-    lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+    lines = path.read_text(encoding="utf-8").splitlines()
     messages: list[Message] = []
     for line in lines:
         try:
@@ -123,7 +145,37 @@ def load_recent_history(path: Path, limit: int) -> list[Message]:
         content = item.get("content")
         if role in {"user", "assistant"} and isinstance(content, str):
             messages.append({"role": role, "content": content})
-    return messages
+
+    if drop_offline_placeholders:
+        messages = drop_offline_placeholder_turns(messages)
+
+    return messages[-limit:]
+
+
+def drop_offline_placeholder_turns(messages: list[Message]) -> list[Message]:
+    cleaned: list[Message] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        next_message = messages[index + 1] if index + 1 < len(messages) else None
+        if (
+            message.get("role") == "user"
+            and next_message
+            and next_message.get("role") == "assistant"
+            and is_offline_placeholder(next_message.get("content", ""))
+        ):
+            index += 2
+            continue
+        if message.get("role") == "assistant" and is_offline_placeholder(message.get("content", "")):
+            index += 1
+            continue
+        cleaned.append(message)
+        index += 1
+    return cleaned
+
+
+def is_offline_placeholder(content: str) -> bool:
+    return any(marker in content for marker in OFFLINE_HISTORY_MARKERS)
 
 
 def append_history(path: Path, role: str, content: str) -> None:

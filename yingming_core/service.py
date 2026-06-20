@@ -49,13 +49,18 @@ class YingmingService:
         if not user_text:
             raise ValueError("消息不能为空。")
 
-        recent_messages = load_recent_history(self.history_path, limit=12)
+        recent_messages = load_recent_history(
+            self.history_path,
+            limit=12,
+            drop_offline_placeholders=self.client.available,
+        )
         messages = build_messages(
             self.read_persona(),
             self.read_profile(),
             self.memory.as_prompt_text(),
             recent_messages,
             user_text,
+            active_model=self.client.settings.display_name if self.client.available else "",
         )
 
         mode = "online" if self.client.available else "offline"
