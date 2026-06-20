@@ -1,0 +1,37 @@
+[
+  {
+    "title": "樱茗测试对话",
+    "mapping": {
+      "root": {
+        "message": null
+      },
+      "user-1": {
+        "message": {
+          "author": {
+            "role": "user"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "我想做一个中文 AI VTuber，她叫樱茗，性格温柔但要机灵一点。"
+            ]
+          }
+        }
+      },
+      "assistant-1": {
+        "message": {
+          "author": {
+            "role": "assistant"
+          },
+          "content": {
+            "content_type": "text",
+            "parts": [
+              "我们可以先做文字版。"
+            ]
+          }
+        }
+      }
+    }
+  }
+]
+

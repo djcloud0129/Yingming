@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.env
+data/user_corpus.jsonl
+data/profile_draft.md
+imports/chatgpt/conversations.json
+server.log
+server.err.log
+dist/
