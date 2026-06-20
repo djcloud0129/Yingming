@@ -316,8 +316,8 @@ class YingmingPetApp:
     def ask_memory(self) -> None:
         window = tk.Toplevel(self.root)
         window.title("记忆体管理器")
-        window.geometry("720x660+650+120")
-        window.minsize(720, 660)
+        window.geometry("760x620+620+80")
+        window.minsize(720, 560)
         window.resizable(True, True)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
@@ -471,6 +471,17 @@ class YingmingPetApp:
 
         buttons = tk.Frame(shell, bg="#f7f1e8")
         buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+        buttons.columnconfigure(0, weight=1)
+        buttons.columnconfigure(1, weight=1)
+
+        primary_buttons = tk.Frame(buttons, bg="#f7f1e8")
+        primary_buttons.grid(row=0, column=0, columnspan=2, sticky="w")
+
+        secondary_buttons = tk.Frame(buttons, bg="#f7f1e8")
+        secondary_buttons.grid(row=1, column=0, sticky="w", pady=(8, 0))
+
+        window_buttons = tk.Frame(buttons, bg="#f7f1e8")
+        window_buttons.grid(row=1, column=1, sticky="e", pady=(8, 0))
 
         def item_title(item: dict[str, Any], index: int) -> str:
             text = str(item.get("text", "")).replace("\n", " ").strip()
@@ -558,7 +569,21 @@ class YingmingPetApp:
         def editor_text() -> str:
             return editor.get("1.0", "end-1c").strip()
 
-        def save() -> None:
+        def add_pending() -> None:
+            text = editor_text()
+            if not text:
+                messagebox.showwarning("樱茗", "记忆内容不能为空。", parent=window)
+                return
+            try:
+                self.service.suggest_memory(text, category=category_var.get())
+            except ValueError as exc:
+                messagebox.showwarning("樱茗", str(exc), parent=window)
+                return
+            self.set_bubble("好，我先放进待确认。确认之后再进入长期记忆。")
+            clear_selection()
+            render()
+
+        def save_direct() -> None:
             text = editor_text()
             if not text:
                 messagebox.showwarning("樱茗", "记忆内容不能为空。", parent=window)
@@ -568,7 +593,7 @@ class YingmingPetApp:
             except ValueError as exc:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
-            self.set_bubble("好，我记住了。")
+            self.set_bubble("好，这条已经直接写入长期记忆。")
             clear_selection()
             render()
 
@@ -625,7 +650,7 @@ class YingmingPetApp:
         memory_list.bind("<<ListboxSelect>>", on_memory_select)
 
         tk.Button(
-            buttons,
+            window_buttons,
             text="关闭",
             command=window.destroy,
             bg="#ffffff",
@@ -637,7 +662,7 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).pack(side="right")
         tk.Button(
-            buttons,
+            window_buttons,
             text="刷新",
             command=render,
             bg="#ffffff",
@@ -649,7 +674,7 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).pack(side="right", padx=(0, 8))
         tk.Button(
-            buttons,
+            secondary_buttons,
             text="删除长期",
             command=delete_memory,
             bg="#ffffff",
@@ -661,8 +686,8 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).pack(side="left", padx=(0, 8))
         tk.Button(
-            buttons,
-            text="忽略建议",
+            secondary_buttons,
+            text="忽略待确认",
             command=discard_pending,
             bg="#ffffff",
             fg="#42523d",
@@ -673,8 +698,21 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).pack(side="left", padx=(0, 8))
         tk.Button(
-            buttons,
-            text="确认保存",
+            primary_buttons,
+            text="加入待确认",
+            command=add_pending,
+            bg="#42523d",
+            fg="#ffffff",
+            activebackground="#526a7a",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="left", padx=(0, 8))
+        tk.Button(
+            primary_buttons,
+            text="确认到长期",
             command=confirm_pending,
             bg="#42523d",
             fg="#ffffff",
@@ -686,7 +724,7 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10, "bold"),
         ).pack(side="left", padx=(0, 8))
         tk.Button(
-            buttons,
+            primary_buttons,
             text="保存修改",
             command=save_edit,
             bg="#ffffff",
@@ -698,17 +736,16 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).pack(side="left", padx=(0, 8))
         tk.Button(
-            buttons,
-            text="新增长期",
-            command=save,
-            bg="#42523d",
-            fg="#ffffff",
-            activebackground="#526a7a",
-            activeforeground="#ffffff",
-            relief="flat",
+            primary_buttons,
+            text="直接长期",
+            command=save_direct,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
             padx=14,
             pady=7,
-            font=("Microsoft YaHei UI", 10, "bold"),
+            font=("Microsoft YaHei UI", 10),
         ).pack(side="left")
 
         render()

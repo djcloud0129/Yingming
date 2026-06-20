@@ -62,7 +62,7 @@ class MemoryStore:
         data = self.load()
         item = MemoryItem(
             id=f"mem_{uuid4().hex[:10]}",
-            category=category,
+            category=normalize_category(category),
             text=text,
             source=source,
             created_at=datetime.now().isoformat(timespec="seconds"),

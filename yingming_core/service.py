@@ -90,6 +90,10 @@ class YingmingService:
         item = self.memory.add(text, category=category or "manual", source="web")
         return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
 
+    def suggest_memory(self, text: str, category: str = "manual") -> dict[str, Any]:
+        item = self.memory.add_pending(text, category=category or "manual", source="manual_pending")
+        return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+
     def update_memory(self, memory_id: str, text: str, category: str) -> dict[str, Any]:
         item = self.memory.update(memory_id, text, category)
         return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
