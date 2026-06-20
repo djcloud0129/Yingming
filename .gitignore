@@ -4,6 +4,7 @@ __pycache__/
 data/local_settings.json
 data/user_corpus.jsonl
 data/profile_draft.md
+data/profile.before-auto-*.md
 imports/chatgpt/conversations.json
 server.log
 server.err.log

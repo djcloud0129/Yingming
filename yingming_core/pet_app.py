@@ -29,6 +29,7 @@ class YingmingPetApp:
         self.topmost = topmost
         self.response_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.is_waiting = False
+        self.is_profile_refreshing = False
         self.is_collapsed = False
         self.drag_start_x = 0
         self.drag_start_y = 0
@@ -289,6 +290,15 @@ class YingmingPetApp:
             self.root.after(120, self.poll_response_queue)
             return
 
+        if result.get("type") == "profile_refresh":
+            self.is_profile_refreshing = False
+            if result.get("ok") and result.get("updated"):
+                self.set_bubble("画像已经自动更新。这样我会更稳地理解你。")
+            elif not result.get("ok"):
+                self.set_bubble(f"画像自动更新暂时失败：{result.get('error', '')}")
+            self.root.after(120, self.poll_response_queue)
+            return
+
         self.is_waiting = False
         self.set_busy(False)
         if result["ok"]:
@@ -312,6 +322,25 @@ class YingmingPetApp:
         self.input_box.configure(state=state)
         if not busy:
             self.input_box.focus_set()
+
+    def start_profile_refresh(self, reason: str) -> None:
+        if not self.service.client.settings.auto_profile or self.is_profile_refreshing:
+            return
+        self.is_profile_refreshing = True
+        threading.Thread(target=self.profile_refresh_worker, args=(reason,), daemon=True).start()
+
+    def profile_refresh_worker(self, reason: str) -> None:
+        try:
+            result = self.service.auto_refresh_profile(reason)
+            self.response_queue.put(
+                {
+                    "type": "profile_refresh",
+                    "ok": True,
+                    "updated": result.get("updated", False),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - show prototype errors.
+            self.response_queue.put({"type": "profile_refresh", "ok": False, "error": str(exc)})
 
     def ask_memory(self) -> None:
         window = tk.Toplevel(self.root)
@@ -589,11 +618,12 @@ class YingmingPetApp:
                 messagebox.showwarning("樱茗", "记忆内容不能为空。", parent=window)
                 return
             try:
-                self.service.remember(text, category=category_var.get())
+                self.service.remember(text, category=category_var.get(), refresh_profile=False)
             except ValueError as exc:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
             self.set_bubble("好，这条已经直接写入长期记忆。")
+            self.start_profile_refresh("直接写入长期记忆")
             clear_selection()
             render()
 
@@ -606,7 +636,8 @@ class YingmingPetApp:
                 if state["kind"] == "pending":
                     self.service.update_pending_memory(state["id"], text, category_var.get())
                 else:
-                    self.service.update_memory(state["id"], text, category_var.get())
+                    self.service.update_memory(state["id"], text, category_var.get(), refresh_profile=False)
+                    self.start_profile_refresh("修改长期记忆")
             except ValueError as exc:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
@@ -618,11 +649,17 @@ class YingmingPetApp:
                 messagebox.showwarning("樱茗", "请先选择一条待确认记忆。", parent=window)
                 return
             try:
-                self.service.confirm_pending_memory(state["id"], text=editor_text(), category=category_var.get())
+                self.service.confirm_pending_memory(
+                    state["id"],
+                    text=editor_text(),
+                    category=category_var.get(),
+                    refresh_profile=False,
+                )
             except ValueError as exc:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
             self.set_bubble("好，这条已经进入长期记忆。")
+            self.start_profile_refresh("确认待确认记忆")
             clear_selection()
             render()
 
@@ -641,8 +678,9 @@ class YingmingPetApp:
                 return
             if not messagebox.askyesno("樱茗", "要删除这条长期记忆吗？", parent=window):
                 return
-            self.service.delete_memory(state["id"])
+            self.service.delete_memory(state["id"], refresh_profile=False)
             self.set_bubble("这条长期记忆已经删除。")
+            self.start_profile_refresh("删除长期记忆")
             clear_selection()
             render()
 
@@ -758,8 +796,8 @@ class YingmingPetApp:
 
         window = tk.Toplevel(self.root)
         window.title("连接 DeepSeek")
-        window.geometry("520x520+760+140")
-        window.minsize(520, 520)
+        window.geometry("520x560+760+100")
+        window.minsize(520, 560)
         window.resizable(True, False)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
@@ -814,6 +852,17 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).grid(row=9, column=0, sticky="w", pady=(10, 0))
 
+        auto_profile_var = tk.BooleanVar(value=settings.auto_profile)
+        tk.Checkbutton(
+            form,
+            text="自动总结用户画像",
+            variable=auto_profile_var,
+            bg="#f7f1e8",
+            fg="#2d3230",
+            activebackground="#f7f1e8",
+            font=("Microsoft YaHei UI", 10),
+        ).grid(row=10, column=0, sticky="w", pady=(4, 0))
+
         thinking_var = tk.BooleanVar(value=settings.deepseek_thinking == "enabled")
         tk.Checkbutton(
             form,
@@ -823,7 +872,7 @@ class YingmingPetApp:
             fg="#2d3230",
             activebackground="#f7f1e8",
             font=("Microsoft YaHei UI", 10),
-        ).grid(row=10, column=0, sticky="w", pady=(4, 0))
+        ).grid(row=11, column=0, sticky="w", pady=(4, 0))
 
         buttons = tk.Frame(window, bg="#f7f1e8")
         buttons.pack(side="bottom", fill="x", padx=12, pady=(0, 12))
@@ -849,6 +898,7 @@ class YingmingPetApp:
                 model=model_entry.get().strip() or DEFAULT_DEEPSEEK_MODEL,
                 temperature=temperature,
                 auto_memory=auto_memory_var.get(),
+                auto_profile=auto_profile_var.get(),
                 deepseek_thinking="enabled" if thinking_var.get() else "disabled",
             )
             self.service.save_model_settings(new_settings)

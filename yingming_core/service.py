@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from pathlib import Path
 from typing import Any
@@ -87,29 +88,49 @@ class YingmingService:
             "history": load_recent_history(self.history_path, limit=80),
         }
 
-    def remember(self, text: str, category: str = "manual") -> dict[str, Any]:
+    def remember(self, text: str, category: str = "manual", refresh_profile: bool = True) -> dict[str, Any]:
         item = self.memory.add(text, category=category or "manual", source="web")
-        return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+        profile_result = self.auto_refresh_profile("新增长期记忆") if refresh_profile else {"updated": False}
+        return {
+            "item": item.__dict__,
+            "memory": self.memory.load(),
+            "memory_text": self.memory.as_readable_text(),
+            "profile_updated": profile_result["updated"],
+        }
 
     def suggest_memory(self, text: str, category: str = "manual") -> dict[str, Any]:
         item = self.memory.add_pending(text, category=category or "manual", source="manual_pending")
         return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
 
-    def update_memory(self, memory_id: str, text: str, category: str) -> dict[str, Any]:
+    def update_memory(self, memory_id: str, text: str, category: str, refresh_profile: bool = True) -> dict[str, Any]:
         item = self.memory.update(memory_id, text, category)
-        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+        profile_result = self.auto_refresh_profile("修改长期记忆") if refresh_profile else {"updated": False}
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text(), "profile_updated": profile_result["updated"]}
 
-    def delete_memory(self, memory_id: str) -> dict[str, Any]:
+    def delete_memory(self, memory_id: str, refresh_profile: bool = True) -> dict[str, Any]:
         item = self.memory.delete(memory_id)
-        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+        profile_result = self.auto_refresh_profile("删除长期记忆") if refresh_profile else {"updated": False}
+        return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text(), "profile_updated": profile_result["updated"]}
 
     def update_pending_memory(self, pending_id: str, text: str, category: str) -> dict[str, Any]:
         item = self.memory.update_pending(pending_id, text, category)
         return {"item": item, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
 
-    def confirm_pending_memory(self, pending_id: str, text: str | None = None, category: str | None = None) -> dict[str, Any]:
+    def confirm_pending_memory(
+        self,
+        pending_id: str,
+        text: str | None = None,
+        category: str | None = None,
+        refresh_profile: bool = True,
+    ) -> dict[str, Any]:
         item = self.memory.confirm_pending(pending_id, text=text, category=category)
-        return {"item": item.__dict__, "memory": self.memory.load(), "memory_text": self.memory.as_readable_text()}
+        profile_result = self.auto_refresh_profile("确认待确认记忆") if refresh_profile else {"updated": False}
+        return {
+            "item": item.__dict__,
+            "memory": self.memory.load(),
+            "memory_text": self.memory.as_readable_text(),
+            "profile_updated": profile_result["updated"],
+        }
 
     def discard_pending_memory(self, pending_id: str) -> dict[str, Any]:
         item = self.memory.discard_pending(pending_id)
@@ -156,6 +177,59 @@ class YingmingService:
         self.profile_draft_path.parent.mkdir(parents=True, exist_ok=True)
         self.profile_draft_path.write_text(draft, encoding="utf-8")
         return {"profile_draft": draft, "profile_draft_path": str(self.profile_draft_path)}
+
+    def auto_refresh_profile(self, reason: str = "") -> dict[str, Any]:
+        if not self.client.settings.auto_profile:
+            return {"updated": False, "reason": "自动画像已关闭"}
+        if not self.client.available:
+            return {"updated": False, "reason": "在线模型不可用"}
+
+        current_profile = self.read_profile()
+        memory_text = self.memory.as_prompt_text()
+        if not memory_text:
+            return {"updated": False, "reason": "没有长期记忆"}
+
+        draft = self.build_profile_text(current_profile, memory_text, reason=reason)
+        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+        if current_profile.strip():
+            backup_path = self.profile_path.with_name(
+                "profile.before-auto-" + datetime.now().strftime("%Y%m%d%H%M%S") + ".md"
+            )
+            backup_path.write_text(current_profile, encoding="utf-8")
+        self.profile_path.write_text(draft, encoding="utf-8")
+        self.profile_draft_path.write_text(draft, encoding="utf-8")
+        return {"updated": True, "profile": draft}
+
+    def build_profile_text(self, current_profile: str, memory_text: str, reason: str = "") -> str:
+        if self.client.available:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是樱茗的自动画像整理器。请根据已经确认的长期记忆更新正式用户画像。"
+                        "必须保留当前画像中仍然合理的人工编辑内容，不要编造，不要把待确认信息写成事实。"
+                        "输出 Markdown，可直接保存为 data/profile.md。"
+                        "对感情、家庭、成长经历、健康等私人内容放在“谨慎使用”部分，并提醒樱茗不要主动频繁提起。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"触发原因：{reason or '长期记忆更新'}\n\n"
+                        "当前画像：\n"
+                        f"{current_profile or '无'}\n\n"
+                        "已确认长期记忆：\n"
+                        f"{memory_text or '无'}\n\n"
+                        "请生成更新后的正式画像。建议包含：基本身份、学习方式、兴趣与目标、"
+                        "相处偏好、正在做的项目、谨慎使用。"
+                    ),
+                },
+            ]
+            try:
+                return self.client.complete(messages, max_tokens=1800, temperature=0.25)
+            except LLMError:
+                pass
+        return build_local_profile_draft(current_profile, memory_text)
 
     def save_model_settings(self, settings: ModelSettings) -> dict[str, Any]:
         save_model_settings(self.project_root, settings)

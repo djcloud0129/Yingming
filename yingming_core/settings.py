@@ -22,6 +22,7 @@ class ModelSettings:
     model: str = DEFAULT_OPENAI_MODEL
     temperature: float = 0.8
     auto_memory: bool = True
+    auto_profile: bool = True
     deepseek_thinking: str = "disabled"
     deepseek_reasoning_effort: str = "high"
 
@@ -61,6 +62,7 @@ def load_model_settings(project_root: Path | None = None) -> ModelSettings:
         "model": os.getenv("YINGMING_MODEL") or os.getenv("DEEPSEEK_MODEL") or os.getenv("OPENAI_MODEL"),
         "temperature": os.getenv("YINGMING_TEMPERATURE"),
         "auto_memory": os.getenv("YINGMING_AUTO_MEMORY"),
+        "auto_profile": os.getenv("YINGMING_AUTO_PROFILE"),
         "deepseek_thinking": os.getenv("DEEPSEEK_THINKING"),
         "deepseek_reasoning_effort": os.getenv("DEEPSEEK_REASONING_EFFORT"),
     }
@@ -108,6 +110,7 @@ def deepseek_default_settings(api_key: str = "") -> ModelSettings:
         model=DEFAULT_DEEPSEEK_MODEL,
         temperature=0.8,
         auto_memory=True,
+        auto_profile=True,
         deepseek_thinking="disabled",
         deepseek_reasoning_effort="high",
     )
@@ -136,6 +139,7 @@ def _coerce_settings(values: dict[str, Any]) -> ModelSettings:
     model = str(values.get("model") or DEFAULT_OPENAI_MODEL).strip()
     temperature = _coerce_float(values.get("temperature"), default=0.8)
     auto_memory = _coerce_bool(values.get("auto_memory"), default=True)
+    auto_profile = _coerce_bool(values.get("auto_profile"), default=True)
     deepseek_thinking = str(values.get("deepseek_thinking") or "disabled").strip().lower()
     if deepseek_thinking not in {"enabled", "disabled", "auto"}:
         deepseek_thinking = "disabled"
@@ -150,6 +154,7 @@ def _coerce_settings(values: dict[str, Any]) -> ModelSettings:
         model=model,
         temperature=temperature,
         auto_memory=auto_memory,
+        auto_profile=auto_profile,
         deepseek_thinking=deepseek_thinking,
         deepseek_reasoning_effort=deepseek_reasoning_effort,
     )
