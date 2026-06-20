@@ -439,12 +439,15 @@ class YingmingPetApp:
 
         window = tk.Toplevel(self.root)
         window.title("连接 DeepSeek")
-        window.geometry("500x410+780+200")
+        window.geometry("520x520+760+140")
+        window.minsize(520, 520)
+        window.resizable(True, False)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
 
         form = tk.Frame(window, bg="#f7f1e8", padx=12, pady=12)
-        form.pack(fill="both", expand=True)
+        form.pack(side="top", fill="both", expand=True)
+        form.columnconfigure(0, weight=1)
 
         tk.Label(
             form,
@@ -452,16 +455,16 @@ class YingmingPetApp:
             bg="#f7f1e8",
             fg="#2d3230",
             font=("Microsoft YaHei UI", 14, "bold"),
-        ).pack(anchor="w", pady=(0, 10))
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
 
-        def add_entry(label: str, value: str, show: str | None = None) -> tk.Entry:
+        def add_entry(row: int, label: str, value: str, show: str | None = None) -> tk.Entry:
             tk.Label(
                 form,
                 text=label,
                 bg="#f7f1e8",
                 fg="#2d3230",
                 font=("Microsoft YaHei UI", 10, "bold"),
-            ).pack(anchor="w", pady=(8, 4))
+            ).grid(row=row, column=0, sticky="w", pady=(6, 3))
             entry = tk.Entry(
                 form,
                 bg="#fffaf2",
@@ -473,13 +476,13 @@ class YingmingPetApp:
                 show=show,
             )
             entry.insert(0, value)
-            entry.pack(fill="x", ipady=7)
+            entry.grid(row=row + 1, column=0, sticky="ew", ipady=7)
             return entry
 
-        api_key_entry = add_entry("API Key", settings.api_key, show="*")
-        base_url_entry = add_entry("Base URL", settings.base_url or DEFAULT_DEEPSEEK_BASE_URL)
-        model_entry = add_entry("模型", settings.model or DEFAULT_DEEPSEEK_MODEL)
-        temperature_entry = add_entry("温度", str(settings.temperature))
+        api_key_entry = add_entry(1, "API Key", settings.api_key, show="*")
+        base_url_entry = add_entry(3, "Base URL", settings.base_url or DEFAULT_DEEPSEEK_BASE_URL)
+        model_entry = add_entry(5, "模型", settings.model or DEFAULT_DEEPSEEK_MODEL)
+        temperature_entry = add_entry(7, "温度", str(settings.temperature))
 
         auto_memory_var = tk.BooleanVar(value=settings.auto_memory)
         tk.Checkbutton(
@@ -490,7 +493,7 @@ class YingmingPetApp:
             fg="#2d3230",
             activebackground="#f7f1e8",
             font=("Microsoft YaHei UI", 10),
-        ).pack(anchor="w", pady=(10, 0))
+        ).grid(row=9, column=0, sticky="w", pady=(10, 0))
 
         thinking_var = tk.BooleanVar(value=settings.deepseek_thinking == "enabled")
         tk.Checkbutton(
@@ -501,10 +504,10 @@ class YingmingPetApp:
             fg="#2d3230",
             activebackground="#f7f1e8",
             font=("Microsoft YaHei UI", 10),
-        ).pack(anchor="w", pady=(4, 0))
+        ).grid(row=10, column=0, sticky="w", pady=(4, 0))
 
-        buttons = tk.Frame(form, bg="#f7f1e8")
-        buttons.pack(fill="x", pady=(16, 0))
+        buttons = tk.Frame(window, bg="#f7f1e8")
+        buttons.pack(side="bottom", fill="x", padx=12, pady=(0, 12))
 
         def fill_deepseek_defaults() -> None:
             base_url_entry.delete(0, "end")
