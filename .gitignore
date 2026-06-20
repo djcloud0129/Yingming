@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .env
+data/local_settings.json
 data/user_corpus.jsonl
 data/profile_draft.md
 imports/chatgpt/conversations.json

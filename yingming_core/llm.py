@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import ssl
+from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+from yingming_core.settings import ModelSettings, load_model_settings
 
 
 Message = dict[str, str]
@@ -16,25 +18,42 @@ class LLMError(RuntimeError):
 
 
 class OpenAICompatibleClient:
-    def __init__(self) -> None:
-        self.api_key = os.getenv("YINGMING_API_KEY") or os.getenv("OPENAI_API_KEY")
-        self.base_url = os.getenv("YINGMING_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        self.model = os.getenv("YINGMING_MODEL", "gpt-4o-mini")
-        self.temperature = float(os.getenv("YINGMING_TEMPERATURE", "0.8"))
+    def __init__(self, project_root: Path | None = None, settings: ModelSettings | None = None) -> None:
+        self.settings = settings or load_model_settings(project_root)
+        self.api_key = self.settings.api_key
+        self.base_url = self.settings.base_url.rstrip("/")
+        self.model = self.settings.model
+        self.temperature = self.settings.temperature
 
     @property
     def available(self) -> bool:
         return bool(self.api_key)
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_format: str | None = None,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> str:
         if not self.api_key:
-            raise LLMError("未配置 YINGMING_API_KEY 或 OPENAI_API_KEY。")
+            raise LLMError("未配置 DeepSeek/OpenAI API key。")
 
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
-            "temperature": self.temperature,
+            "temperature": self.temperature if temperature is None else temperature,
         }
+        if response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if self.settings.is_deepseek and self.settings.deepseek_thinking in {"enabled", "disabled"}:
+            payload["thinking"] = {"type": self.settings.deepseek_thinking}
+            if self.settings.deepseek_thinking == "enabled":
+                payload["reasoning_effort"] = self.settings.deepseek_reasoning_effort
+
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         request = Request(
             f"{self.base_url}/chat/completions",
@@ -104,4 +123,3 @@ class OfflineYingming:
             "但我会尽量按樱茗的方式陪你：先听清楚，再轻轻地帮你整理。"
             "你可以继续说，我在。"
         )
-

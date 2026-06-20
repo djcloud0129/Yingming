@@ -30,13 +30,15 @@ def run_chat(project_root: Path) -> None:
     profile = profile_path.read_text(encoding="utf-8") if profile_path.exists() else ""
     history_path.parent.mkdir(parents=True, exist_ok=True)
 
-    client = OpenAICompatibleClient()
+    client = OpenAICompatibleClient(project_root)
     offline = OfflineYingming()
     recent_messages = load_recent_history(history_path, limit=12)
 
     print("樱茗：晚上好。我在这里。输入 /帮助 可以看指令，输入 /退出 就能结束。")
     if not client.available:
         print("樱茗：现在还没有配置模型 API，我会先用离线模式陪你试运行。")
+    else:
+        print(f"樱茗：已经接入 {client.settings.display_name}。")
 
     while True:
         try:

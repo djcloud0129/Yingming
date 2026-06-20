@@ -4,11 +4,13 @@ import queue
 import threading
 import tkinter as tk
 from tkinter import messagebox
+from dataclasses import replace
 from math import ceil
 from pathlib import Path
 from typing import Any
 
 from yingming_core.service import YingmingService
+from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
 
 
 FULL_WINDOW_GEOMETRY = "340x600+920+160"
@@ -41,7 +43,8 @@ class YingmingPetApp:
 
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="展开聊天", command=self.restore_full_window)
-        self.menu.add_command(label="写入长期记忆", command=self.ask_memory)
+        self.menu.add_command(label="打开记忆体", command=self.ask_memory)
+        self.menu.add_command(label="连接 DeepSeek", command=self.open_connection_settings)
         self.menu.add_command(label="编辑用户画像", command=self.open_profile_editor)
         self.menu.add_command(label="切换置顶", command=self.toggle_topmost)
         self.menu.add_separator()
@@ -176,7 +179,7 @@ class YingmingPetApp:
 
         tk.Button(
             self.actions,
-            text="记忆",
+            text="记忆体",
             command=self.ask_memory,
             bg="#ffffff",
             fg="#42523d",
@@ -190,6 +193,18 @@ class YingmingPetApp:
             self.actions,
             text="画像",
             command=self.open_profile_editor,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=10,
+            pady=5,
+        ).pack(side="left", padx=(8, 0))
+
+        tk.Button(
+            self.actions,
+            text="连接",
+            command=self.open_connection_settings,
             bg="#ffffff",
             fg="#42523d",
             relief="solid",
@@ -236,6 +251,9 @@ class YingmingPetApp:
         model = state.get("model", {})
         return str(model.get("name") or "离线模式")
 
+    def refresh_mode_label(self) -> None:
+        self.mode_label.configure(text=self.model_label_text())
+
     def send_message(self) -> None:
         text = self.input_var.get().strip()
         if not text or self.is_waiting:
@@ -252,7 +270,13 @@ class YingmingPetApp:
     def reply_worker(self, text: str) -> None:
         try:
             result = self.service.reply(text)
-            self.response_queue.put({"ok": True, "reply": result["reply"]})
+            self.response_queue.put(
+                {
+                    "ok": True,
+                    "reply": result["reply"],
+                    "memories_added": result.get("memories_added", []),
+                }
+            )
         except Exception as exc:  # noqa: BLE001 - show local prototype errors in UI.
             self.response_queue.put({"ok": False, "reply": str(exc)})
 
@@ -266,9 +290,14 @@ class YingmingPetApp:
         self.is_waiting = False
         self.set_busy(False)
         if result["ok"]:
-            self.set_bubble(result["reply"])
+            reply = result["reply"]
+            memories_added = result.get("memories_added", [])
+            if memories_added:
+                reply = f"{reply}\n\n（我整理了 {len(memories_added)} 条新的长期记忆。）"
+            self.set_bubble(reply)
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
+        self.refresh_mode_label()
 
         self.root.after(120, self.poll_response_queue)
 
@@ -281,21 +310,51 @@ class YingmingPetApp:
 
     def ask_memory(self) -> None:
         window = tk.Toplevel(self.root)
-        window.title("长期记忆")
-        window.geometry("460x320+800+220")
+        window.title("记忆体")
+        window.geometry("520x520+760+180")
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
 
         tk.Label(
             window,
-            text="想让樱茗记住什么？",
+            text="记忆体",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 14, "bold"),
+        ).pack(anchor="w", padx=12, pady=(12, 6))
+
+        memory_frame = tk.Frame(window, bg="#f7f1e8")
+        memory_frame.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+
+        memory_scrollbar = tk.Scrollbar(memory_frame, orient="vertical")
+        memory_view = tk.Text(
+            memory_frame,
+            height=12,
+            wrap="word",
+            bg="#fff8f6",
+            fg="#2d3230",
+            relief="solid",
+            bd=1,
+            padx=10,
+            pady=10,
+            font=("Microsoft YaHei UI", 10),
+            yscrollcommand=memory_scrollbar.set,
+        )
+        memory_scrollbar.configure(command=memory_view.yview)
+        memory_scrollbar.pack(side="right", fill="y")
+        memory_view.pack(side="left", fill="both", expand=True)
+
+        tk.Label(
+            window,
+            text="写入新记忆",
             bg="#f7f1e8",
             fg="#2d3230",
             font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="w", padx=12, pady=(12, 6))
+        ).pack(anchor="w", padx=12, pady=(0, 6))
 
         editor = tk.Text(
             window,
+            height=5,
             wrap="word",
             bg="#fffaf2",
             fg="#2d3230",
@@ -306,10 +365,17 @@ class YingmingPetApp:
             pady=10,
             font=("Microsoft YaHei UI", 10),
         )
-        editor.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+        editor.pack(fill="x", padx=12, pady=(0, 10))
 
         buttons = tk.Frame(window, bg="#f7f1e8")
         buttons.pack(fill="x", padx=12, pady=(0, 12))
+
+        def render() -> None:
+            memory_view.configure(state="normal")
+            memory_view.delete("1.0", "end")
+            memory_view.insert("1.0", self.service.memory.as_readable_text())
+            memory_view.configure(state="disabled")
+            memory_view.yview_moveto(0.0)
 
         def save() -> None:
             text = editor.get("1.0", "end-1c").strip()
@@ -322,11 +388,12 @@ class YingmingPetApp:
                 messagebox.showwarning("樱茗", str(exc), parent=window)
                 return
             self.set_bubble("好，我记住了。")
-            window.destroy()
+            editor.delete("1.0", "end")
+            render()
 
         tk.Button(
             buttons,
-            text="取消",
+            text="关闭",
             command=window.destroy,
             bg="#ffffff",
             fg="#42523d",
@@ -336,6 +403,18 @@ class YingmingPetApp:
             pady=7,
             font=("Microsoft YaHei UI", 10),
         ).pack(side="right")
+        tk.Button(
+            buttons,
+            text="刷新",
+            command=render,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="right", padx=(0, 8))
         tk.Button(
             buttons,
             text="保存记忆",
@@ -350,7 +429,150 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10, "bold"),
         ).pack(side="right", padx=(0, 8))
 
+        render()
         editor.focus_set()
+
+    def open_connection_settings(self) -> None:
+        settings = self.service.client.settings
+        if not settings.is_deepseek:
+            settings = self.service.deepseek_defaults(api_key=settings.api_key)
+
+        window = tk.Toplevel(self.root)
+        window.title("连接 DeepSeek")
+        window.geometry("500x410+780+200")
+        window.configure(bg="#f7f1e8")
+        window.attributes("-topmost", self.topmost)
+
+        form = tk.Frame(window, bg="#f7f1e8", padx=12, pady=12)
+        form.pack(fill="both", expand=True)
+
+        tk.Label(
+            form,
+            text="连接 DeepSeek",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 14, "bold"),
+        ).pack(anchor="w", pady=(0, 10))
+
+        def add_entry(label: str, value: str, show: str | None = None) -> tk.Entry:
+            tk.Label(
+                form,
+                text=label,
+                bg="#f7f1e8",
+                fg="#2d3230",
+                font=("Microsoft YaHei UI", 10, "bold"),
+            ).pack(anchor="w", pady=(8, 4))
+            entry = tk.Entry(
+                form,
+                bg="#fffaf2",
+                fg="#2d3230",
+                insertbackground="#2d3230",
+                relief="solid",
+                bd=1,
+                font=("Microsoft YaHei UI", 10),
+                show=show,
+            )
+            entry.insert(0, value)
+            entry.pack(fill="x", ipady=7)
+            return entry
+
+        api_key_entry = add_entry("API Key", settings.api_key, show="*")
+        base_url_entry = add_entry("Base URL", settings.base_url or DEFAULT_DEEPSEEK_BASE_URL)
+        model_entry = add_entry("模型", settings.model or DEFAULT_DEEPSEEK_MODEL)
+        temperature_entry = add_entry("温度", str(settings.temperature))
+
+        auto_memory_var = tk.BooleanVar(value=settings.auto_memory)
+        tk.Checkbutton(
+            form,
+            text="自动整理长期记忆",
+            variable=auto_memory_var,
+            bg="#f7f1e8",
+            fg="#2d3230",
+            activebackground="#f7f1e8",
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(10, 0))
+
+        thinking_var = tk.BooleanVar(value=settings.deepseek_thinking == "enabled")
+        tk.Checkbutton(
+            form,
+            text="启用 DeepSeek 思考模式",
+            variable=thinking_var,
+            bg="#f7f1e8",
+            fg="#2d3230",
+            activebackground="#f7f1e8",
+            font=("Microsoft YaHei UI", 10),
+        ).pack(anchor="w", pady=(4, 0))
+
+        buttons = tk.Frame(form, bg="#f7f1e8")
+        buttons.pack(fill="x", pady=(16, 0))
+
+        def fill_deepseek_defaults() -> None:
+            base_url_entry.delete(0, "end")
+            base_url_entry.insert(0, DEFAULT_DEEPSEEK_BASE_URL)
+            model_entry.delete(0, "end")
+            model_entry.insert(0, DEFAULT_DEEPSEEK_MODEL)
+
+        def save() -> None:
+            try:
+                temperature = float(temperature_entry.get().strip() or "0.8")
+            except ValueError:
+                messagebox.showwarning("樱茗", "温度需要是数字，例如 0.8。", parent=window)
+                return
+
+            new_settings = replace(
+                settings,
+                provider="deepseek",
+                api_key=api_key_entry.get().strip(),
+                base_url=base_url_entry.get().strip().rstrip("/") or DEFAULT_DEEPSEEK_BASE_URL,
+                model=model_entry.get().strip() or DEFAULT_DEEPSEEK_MODEL,
+                temperature=temperature,
+                auto_memory=auto_memory_var.get(),
+                deepseek_thinking="enabled" if thinking_var.get() else "disabled",
+            )
+            self.service.save_model_settings(new_settings)
+            self.refresh_mode_label()
+            self.set_bubble("DeepSeek 已保存。你可以直接和我说话，我会带着记忆体一起回应。")
+            window.destroy()
+
+        tk.Button(
+            buttons,
+            text="DeepSeek 默认",
+            command=fill_deepseek_defaults,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="left")
+        tk.Button(
+            buttons,
+            text="关闭",
+            command=window.destroy,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="right")
+        tk.Button(
+            buttons,
+            text="保存连接",
+            command=save,
+            bg="#42523d",
+            fg="#ffffff",
+            activebackground="#526a7a",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).pack(side="right", padx=(0, 8))
+
+        api_key_entry.focus_set()
 
     def open_profile_editor(self) -> None:
         window = tk.Toplevel(self.root)

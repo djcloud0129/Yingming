@@ -30,6 +30,26 @@ $env:YINGMING_MODEL="你的模型名"
 $env:YINGMING_TEMPERATURE="0.8"
 ```
 
+如果你使用 DeepSeek，桌宠里可以直接点 `连接`，填入 API Key 后保存。配置会写入本机的：
+
+```text
+data\local_settings.json
+```
+
+这个文件已经被 `.gitignore` 排除，不会备份到 GitHub。DeepSeek 的默认配置为：
+
+```text
+Base URL: https://api.deepseek.com
+Model: deepseek-v4-flash
+```
+
+也可以用环境变量启动：
+
+```powershell
+$env:DEEPSEEK_API_KEY="你的 DeepSeek key"
+python .\yingming.py pet
+```
+
 ## Web 交互界面
 
 ```powershell
@@ -64,7 +84,9 @@ yingming_pet.pyw
 start_pet.bat
 ```
 
-桌宠版会显示一个置顶小窗口，可以拖动、聊天、写入长期记忆、编辑用户画像。收起后可以点 `展开` 恢复，也可以双击头像恢复；右键樱茗窗口可以展开聊天、切换置顶或退出。
+桌宠版会显示一个置顶小窗口，可以拖动、聊天、打开记忆体、连接 DeepSeek、编辑用户画像。收起后可以点 `展开` 恢复，也可以双击头像恢复；右键樱茗窗口可以展开聊天、连接 DeepSeek、切换置顶或退出。
+
+`记忆体` 会展示当前长期记忆，也可以继续手动写入。接入 DeepSeek 后，樱茗会在每轮聊天后尝试把你明确说出的稳定偏好、目标和项目线索整理进长期记忆；临时情绪、敏感隐私和助手自己的推测不会自动保存。
 
 ## Windows exe
 
@@ -135,4 +157,5 @@ Get-Content .\data\profile_draft.md -Encoding UTF8
 - `data/profile.md`：你的个人画像，适合放稳定、经过确认的信息。
 - `data/memory.json`：长期记忆，适合放偏好、习惯、目标、专属梗。
 - `data/chat_history.jsonl`：本地聊天历史。
+- `data/local_settings.json`：本机模型连接设置，可能包含 API key，不会提交到 GitHub。
 - `imports/chatgpt/`：放 ChatGPT 导出文件。

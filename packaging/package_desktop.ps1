@@ -78,7 +78,9 @@ $Readme = @(
     "- This is a portable bundle. You do not need to open a browser or start a local web server.",
     "- app\data\memory.json stores long-term memory.",
     "- app\data\profile.md stores the user profile.",
-    "- To use an online model, set YINGMING_API_KEY and YINGMING_MODEL in system environment variables."
+    "- Click the Connect button in the pet window to save DeepSeek settings locally.",
+    "- app\data\local_settings.json stores local model settings and is not meant for GitHub backup.",
+    "- You can also use DEEPSEEK_API_KEY or YINGMING_API_KEY in system environment variables."
 ) -join [Environment]::NewLine
 $Readme | Set-Content -LiteralPath (Join-Path $BundleRoot "README.txt") -Encoding UTF8
 
