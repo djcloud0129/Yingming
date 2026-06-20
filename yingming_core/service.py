@@ -23,6 +23,7 @@ class YingmingService:
         self.project_root = project_root
         self.persona_path = project_root / "personas" / "yingming.md"
         self.profile_path = project_root / "data" / "profile.md"
+        self.profile_draft_path = project_root / "data" / "profile_draft.md"
         self.history_path = project_root / "data" / "chat_history.jsonl"
         self.memory = MemoryStore(project_root / "data" / "memory.json")
         self.client = OpenAICompatibleClient(project_root)
@@ -118,6 +119,43 @@ class YingmingService:
         self.profile_path.parent.mkdir(parents=True, exist_ok=True)
         self.profile_path.write_text(text, encoding="utf-8")
         return {"profile": text}
+
+    def generate_profile_draft(self) -> dict[str, str]:
+        current_profile = self.read_profile()
+        memory_text = self.memory.as_prompt_text()
+        if self.client.available:
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是樱茗的用户画像整理器。请只根据用户已经确认的画像和长期记忆生成画像草稿，"
+                        "不要编造，不要把待确认信息当作事实。"
+                        "输出 Markdown，结构清晰，中文为主。"
+                        "要把敏感或需要谨慎使用的信息单独放在“谨慎使用”部分，提醒樱茗不要主动频繁提起。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        "当前画像：\n"
+                        f"{current_profile or '无'}\n\n"
+                        "长期记忆：\n"
+                        f"{memory_text or '无'}\n\n"
+                        "请生成一份可直接保存为 data/profile.md 的画像草稿。"
+                        "建议包含：基本身份、学习方式、兴趣与目标、相处偏好、正在做的项目、谨慎使用。"
+                    ),
+                },
+            ]
+            try:
+                draft = self.client.complete(messages, max_tokens=1800, temperature=0.3)
+            except LLMError:
+                draft = build_local_profile_draft(current_profile, memory_text)
+        else:
+            draft = build_local_profile_draft(current_profile, memory_text)
+
+        self.profile_draft_path.parent.mkdir(parents=True, exist_ok=True)
+        self.profile_draft_path.write_text(draft, encoding="utf-8")
+        return {"profile_draft": draft, "profile_draft_path": str(self.profile_draft_path)}
 
     def save_model_settings(self, settings: ModelSettings) -> dict[str, Any]:
         save_model_settings(self.project_root, settings)
@@ -218,3 +256,33 @@ def extract_json_object(text: str) -> str:
     if start == -1 or end == -1 or end < start:
         raise ValueError("没有找到 JSON 对象。")
     return stripped[start : end + 1]
+
+
+def build_local_profile_draft(current_profile: str, memory_text: str) -> str:
+    profile = current_profile.strip() or "暂无已保存画像。"
+    memory = memory_text.strip() or "暂无长期记忆。"
+    return "\n".join(
+        [
+            "# 使用者画像草稿",
+            "",
+            "这份草稿由本地模板根据当前画像和长期记忆整理。请检查、删改后再保存为正式画像。",
+            "",
+            "## 当前画像摘要",
+            "",
+            profile,
+            "",
+            "## 长期记忆依据",
+            "",
+            memory,
+            "",
+            "## 整理建议",
+            "",
+            "- 保留稳定身份、长期目标、学习偏好和相处偏好。",
+            "- 对家庭、感情、成长经历等较私人的内容，放到“谨慎使用”部分。",
+            "- 删除不想让樱茗长期使用的内容，再保存正式画像。",
+            "",
+            "## 谨慎使用",
+            "",
+            "- 涉及隐私、感情、家庭和成长经历的信息，只在用户主动提起或明显需要时使用。",
+        ]
+    )

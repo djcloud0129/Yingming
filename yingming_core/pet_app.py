@@ -899,12 +899,47 @@ class YingmingPetApp:
     def open_profile_editor(self) -> None:
         window = tk.Toplevel(self.root)
         window.title("用户画像")
-        window.geometry("560x500+760+180")
+        window.geometry("660x620+700+120")
+        window.minsize(620, 560)
+        window.resizable(True, True)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
 
+        result_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+
+        shell = tk.Frame(window, bg="#f7f1e8", padx=12, pady=12)
+        shell.pack(fill="both", expand=True)
+        shell.rowconfigure(1, weight=1)
+        shell.columnconfigure(0, weight=1)
+
+        header = tk.Frame(shell, bg="#f7f1e8")
+        header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        header.columnconfigure(0, weight=1)
+
+        tk.Label(
+            header,
+            text="用户画像",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 14, "bold"),
+        ).grid(row=0, column=0, sticky="w")
+
+        status_label = tk.Label(
+            header,
+            text="确认后保存，樱茗以后会按这份画像理解你。",
+            bg="#f7f1e8",
+            fg="#6f7f56",
+            font=("Microsoft YaHei UI", 9),
+        )
+        status_label.grid(row=0, column=1, sticky="e")
+
+        editor_frame = tk.Frame(shell, bg="#f7f1e8")
+        editor_frame.grid(row=1, column=0, sticky="nsew")
+        editor_frame.rowconfigure(0, weight=1)
+        editor_frame.columnconfigure(0, weight=1)
+
         editor = tk.Text(
-            window,
+            editor_frame,
             wrap="word",
             bg="#fffaf2",
             fg="#2d3230",
@@ -915,16 +950,73 @@ class YingmingPetApp:
             pady=10,
             font=("Microsoft YaHei UI", 10),
         )
-        editor.pack(fill="both", expand=True, padx=12, pady=(12, 8))
+        editor.grid(row=0, column=0, sticky="nsew")
+        editor_scrollbar = tk.Scrollbar(editor_frame, orient="vertical", command=editor.yview)
+        editor.configure(yscrollcommand=editor_scrollbar.set)
+        editor_scrollbar.grid(row=0, column=1, sticky="ns")
         editor.insert("1.0", self.service.read_profile())
+
+        buttons = tk.Frame(shell, bg="#f7f1e8")
+        buttons.grid(row=2, column=0, sticky="ew", pady=(10, 0))
+
+        def set_editor_text(text: str) -> None:
+            editor.delete("1.0", "end")
+            editor.insert("1.0", text)
+
+        def load_current() -> None:
+            set_editor_text(self.service.read_profile())
+            status_label.configure(text="已载入当前画像。")
+
+        def generate_worker() -> None:
+            try:
+                result = self.service.generate_profile_draft()
+                result_queue.put({"ok": True, "draft": result["profile_draft"]})
+            except Exception as exc:  # noqa: BLE001 - keep prototype errors visible.
+                result_queue.put({"ok": False, "error": str(exc)})
+
+        def poll_generate_result() -> None:
+            try:
+                result = result_queue.get_nowait()
+            except queue.Empty:
+                if window.winfo_exists():
+                    window.after(120, poll_generate_result)
+                return
+
+            generate_button.configure(state="normal")
+            if result.get("ok"):
+                set_editor_text(str(result.get("draft", "")))
+                status_label.configure(text="草稿已生成。请检查后再保存。")
+                self.set_bubble("画像草稿已经整理好。你看一遍，确认后再保存。")
+            else:
+                status_label.configure(text="生成失败。")
+                messagebox.showerror("樱茗", str(result.get("error", "生成画像草稿失败。")), parent=window)
+
+        def generate() -> None:
+            generate_button.configure(state="disabled")
+            status_label.configure(text="正在根据长期记忆整理画像草稿。")
+            threading.Thread(target=generate_worker, daemon=True).start()
+            window.after(120, poll_generate_result)
 
         def save() -> None:
             self.service.save_profile(editor.get("1.0", "end-1c"))
             self.set_bubble("画像已经保存。这样我会更稳地记住你确认过的部分。")
+            status_label.configure(text="画像已保存。")
             window.destroy()
 
         tk.Button(
-            window,
+            buttons,
+            text="关闭",
+            command=window.destroy,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="right")
+        tk.Button(
+            buttons,
             text="保存画像",
             command=save,
             bg="#42523d",
@@ -935,7 +1027,33 @@ class YingmingPetApp:
             padx=16,
             pady=8,
             font=("Microsoft YaHei UI", 10, "bold"),
-        ).pack(anchor="e", padx=12, pady=(0, 12))
+        ).pack(side="right", padx=(0, 8))
+        tk.Button(
+            buttons,
+            text="载入当前",
+            command=load_current,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        ).pack(side="left", padx=(0, 8))
+        generate_button = tk.Button(
+            buttons,
+            text="生成画像草稿",
+            command=generate,
+            bg="#42523d",
+            fg="#ffffff",
+            activebackground="#526a7a",
+            activeforeground="#ffffff",
+            relief="flat",
+            padx=14,
+            pady=7,
+            font=("Microsoft YaHei UI", 10, "bold"),
+        )
+        generate_button.pack(side="left")
 
     def minimize_to_small_pet(self) -> None:
         self.is_collapsed = True
