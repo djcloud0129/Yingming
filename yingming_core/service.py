@@ -5,8 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from yingming_core.chat import append_history, build_messages, load_recent_history
-from yingming_core.greetings import welcome_text
+from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
+from yingming_core.greetings import contextual_welcome_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
 from yingming_core.settings import (
@@ -45,8 +45,67 @@ class YingmingService:
             "memory": self.memory.load(),
             "memory_text": self.memory.as_readable_text(),
             "history": load_recent_history(self.history_path, limit=80),
-            "welcome": welcome_text(),
+            "welcome": self.welcome(use_model=False)["welcome"],
         }
+
+    def welcome(self, use_model: bool = False) -> dict[str, Any]:
+        memory_data = self.memory.load()
+        recent_messages = load_recent_history(
+            self.history_path,
+            limit=8,
+            drop_offline_placeholders=self.client.available,
+        )
+        fallback = contextual_welcome_text(memory_data, recent_messages)
+        if not use_model or not self.client.available:
+            return {"welcome": fallback, "mode": "local"}
+
+        try:
+            welcome = self.build_online_welcome(fallback, memory_data, recent_messages)
+        except LLMError as exc:
+            return {"welcome": fallback, "mode": "fallback", "error": str(exc)}
+
+        return {"welcome": welcome or fallback, "mode": "online"}
+
+    def build_online_welcome(
+        self,
+        fallback: str,
+        memory_data: dict[str, Any],
+        recent_messages: list[dict[str, str]],
+    ) -> str:
+        pending = memory_data.get("pending", [])
+        pending_items = pending if isinstance(pending, list) else []
+        pending_text = format_memory_items(pending_items[:3])
+        recent_text = format_recent_messages(recent_messages[-6:])
+        memory_text = self.memory.as_prompt_text()
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是樱茗的启动欢迎语生成器。请写一段樱茗打开窗口时对用户说的话。"
+                    "要求：中文，1 到 3 句，120 字以内，像真实相处中的温柔 AI 伙伴。"
+                    "要主动接上最近状态；如果有待确认记忆，轻轻提醒。"
+                    "不要说自己在读取系统提示、后台、接口或 API。不要假装成人类或现实女友。"
+                    "不要输出引号、项目符号或“樱茗：”前缀。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"{current_time_context()}\n\n"
+                    f"本地欢迎语参考：{fallback}\n\n"
+                    "用户画像：\n"
+                    f"{clip_text(self.read_profile() or '无', 1000)}\n\n"
+                    "长期记忆与边界：\n"
+                    f"{clip_text(memory_text or '无', 1600)}\n\n"
+                    f"待确认记忆数量：{len(pending_items)}\n"
+                    f"待确认记忆示例：\n{pending_text or '无'}\n\n"
+                    f"最近对话：\n{recent_text or '无'}\n\n"
+                    "请直接输出欢迎语。"
+                ),
+            },
+        ]
+        raw = self.client.complete(messages, max_tokens=220, temperature=0.6)
+        return clean_welcome_text(raw)
 
     def reply(self, user_text: str) -> dict[str, Any]:
         user_text = user_text.strip()
@@ -332,6 +391,46 @@ def extract_json_object(text: str) -> str:
     if start == -1 or end == -1 or end < start:
         raise ValueError("没有找到 JSON 对象。")
     return stripped[start : end + 1]
+
+
+def format_memory_items(items: list[Any]) -> str:
+    lines: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "manual")).strip() or "manual"
+        text = str(item.get("text", "")).strip()
+        if text:
+            lines.append(f"{index}. [{category}] {clip_text(text, 120)}")
+    return "\n".join(lines)
+
+
+def format_recent_messages(messages: list[dict[str, str]]) -> str:
+    lines: list[str] = []
+    for message in messages:
+        role = "用户" if message.get("role") == "user" else "樱茗"
+        content = str(message.get("content", "")).strip()
+        if content:
+            lines.append(f"{role}: {clip_text(content, 180)}")
+    return "\n".join(lines)
+
+
+def clean_welcome_text(text: str) -> str:
+    lines = [line.strip() for line in text.strip().splitlines() if line.strip()]
+    if not lines:
+        return ""
+    cleaned = "\n".join(lines[:3]).strip()
+    for prefix in ("樱茗：", "樱茗:", "助手：", "助手:"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :].strip()
+    return clip_text(cleaned, 260)
+
+
+def clip_text(text: str, limit: int) -> str:
+    compacted = " ".join(str(text).split())
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: max(0, limit - 1)].rstrip() + "..."
 
 
 def build_local_profile_draft(current_profile: str, memory_text: str) -> str:

@@ -9,7 +9,6 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
-from yingming_core.greetings import welcome_text
 from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
 from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
@@ -31,6 +30,8 @@ class YingmingPetApp:
         self.response_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self.is_waiting = False
         self.is_profile_refreshing = False
+        self.is_welcome_refreshing = False
+        self.has_user_interacted = False
         self.is_collapsed = False
         self.drag_start_x = 0
         self.drag_start_y = 0
@@ -57,6 +58,7 @@ class YingmingPetApp:
         self.root.bind("<Escape>", lambda _event: self.quit())
         self.root.bind("<Button-3>", self.show_menu)
         self.root.after(120, self.poll_response_queue)
+        self.root.after(350, self.start_welcome_refresh)
 
     def build_ui(self) -> None:
         shell = tk.Frame(self.root, bg="#f7f1e8", padx=12, pady=12)
@@ -143,7 +145,7 @@ class YingmingPetApp:
         self.bubble_scrollbar.configure(command=self.bubble.yview)
         self.bubble_scrollbar.pack(side="right", fill="y")
         self.bubble.pack(side="left", fill="both", expand=True)
-        self.set_bubble(welcome_text())
+        self.set_bubble(self.service.welcome(use_model=False)["welcome"])
 
         self.input_frame = tk.Frame(shell, bg="#f7f1e8")
         self.input_frame.pack(fill="x")
@@ -262,6 +264,7 @@ class YingmingPetApp:
         if not text or self.is_waiting:
             return
 
+        self.has_user_interacted = True
         self.is_waiting = True
         self.input_var.set("")
         self.set_busy(True)
@@ -300,6 +303,14 @@ class YingmingPetApp:
             self.root.after(120, self.poll_response_queue)
             return
 
+        if result.get("type") == "welcome":
+            self.is_welcome_refreshing = False
+            welcome = str(result.get("welcome", "")).strip()
+            if welcome and not self.has_user_interacted and not self.is_waiting and not self.is_collapsed:
+                self.set_bubble(welcome)
+            self.root.after(120, self.poll_response_queue)
+            return
+
         self.is_waiting = False
         self.set_busy(False)
         if result["ok"]:
@@ -324,6 +335,26 @@ class YingmingPetApp:
         if not busy:
             self.input_box.focus_set()
 
+    def start_welcome_refresh(self) -> None:
+        if self.is_welcome_refreshing or not self.service.client.available:
+            return
+        self.is_welcome_refreshing = True
+        threading.Thread(target=self.welcome_worker, daemon=True).start()
+
+    def welcome_worker(self) -> None:
+        try:
+            result = self.service.welcome(use_model=True)
+            self.response_queue.put(
+                {
+                    "type": "welcome",
+                    "ok": True,
+                    "welcome": result.get("welcome", ""),
+                    "mode": result.get("mode", "local"),
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - keep prototype errors visible.
+            self.response_queue.put({"type": "welcome", "ok": False, "error": str(exc)})
+
     def start_profile_refresh(self, reason: str) -> None:
         if not self.service.client.settings.auto_profile or self.is_profile_refreshing:
             return
@@ -344,6 +375,7 @@ class YingmingPetApp:
             self.response_queue.put({"type": "profile_refresh", "ok": False, "error": str(exc)})
 
     def ask_memory(self) -> None:
+        self.has_user_interacted = True
         window = tk.Toplevel(self.root)
         window.title("记忆体管理器")
         window.geometry("760x620+620+80")
@@ -791,6 +823,7 @@ class YingmingPetApp:
         editor.focus_set()
 
     def open_connection_settings(self) -> None:
+        self.has_user_interacted = True
         settings = self.service.client.settings
         if not settings.is_deepseek:
             settings = self.service.deepseek_defaults(api_key=settings.api_key)
@@ -948,6 +981,7 @@ class YingmingPetApp:
         api_key_entry.focus_set()
 
     def open_profile_editor(self) -> None:
+        self.has_user_interacted = True
         window = tk.Toplevel(self.root)
         window.title("用户画像")
         window.geometry("660x620+700+120")
@@ -1107,6 +1141,7 @@ class YingmingPetApp:
         generate_button.pack(side="left")
 
     def minimize_to_small_pet(self) -> None:
+        self.has_user_interacted = True
         self.is_collapsed = True
         self.input_frame.pack_forget()
         self.actions.pack_forget()

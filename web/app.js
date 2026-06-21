@@ -75,6 +75,9 @@ async function refreshState() {
   renderModel(data.model);
   renderMessages();
   renderMemory();
+  if (state.history.length === 0) {
+    refreshSmartWelcome();
+  }
 }
 
 function renderModel(model) {
@@ -180,6 +183,7 @@ async function clearHistory() {
   await request("/api/history/clear", { method: "POST", body: {} });
   state.history = [];
   renderMessages();
+  refreshSmartWelcome();
   showToast("聊天已清空");
 }
 
@@ -263,6 +267,19 @@ function showToast(message) {
 
 function scrollMessages() {
   els.messages.scrollTop = els.messages.scrollHeight;
+}
+
+async function refreshSmartWelcome() {
+  try {
+    const data = await request("/api/welcome");
+    if (state.history.length !== 0) {
+      return;
+    }
+    state.welcome = data.welcome ?? state.welcome;
+    renderMessages();
+  } catch (error) {
+    state.welcome = state.welcome || fallbackWelcomeText();
+  }
 }
 
 function fallbackWelcomeText() {

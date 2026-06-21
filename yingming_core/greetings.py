@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 
 def greeting_for_hour(hour: int) -> str:
@@ -27,3 +28,88 @@ def current_greeting(now: datetime | None = None) -> str:
 
 def welcome_text(now: datetime | None = None) -> str:
     return f"{current_greeting(now)}。我在这里。你可以慢慢说。"
+
+
+def contextual_welcome_text(
+    memory_data: dict[str, Any] | None = None,
+    recent_messages: list[dict[str, str]] | None = None,
+    now: datetime | None = None,
+) -> str:
+    memory_data = memory_data or {}
+    recent_messages = recent_messages or []
+    greeting = current_greeting(now)
+    pending = memory_data.get("pending", [])
+    pending_count = len(pending) if isinstance(pending, list) else 0
+
+    parts = [f"{greeting}。我在这里。"]
+    if pending_count:
+        parts.append(f"我这里有 {pending_count} 条待确认记忆，等你方便，我们一起看一眼，别让我记偏。")
+        return "".join(parts)
+
+    last_user = latest_user_message(recent_messages)
+    if last_user:
+        if is_project_like(last_user):
+            parts.append(f"上次我们聊到“{compact_text(last_user, 34)}”。")
+        else:
+            parts.append("上次的话题我还留着。")
+        parts.append("要继续往前推一点，还是先换个轻一点的话题？")
+        return "".join(parts)
+
+    project_hint = latest_project_hint(memory_data)
+    if project_hint:
+        parts.append(f"我还记得：{compact_text(project_hint, 42)}。")
+        parts.append("今天也可以只往前挪一小步。")
+        return "".join(parts)
+
+    parts.append("你可以慢慢说。")
+    return "".join(parts)
+
+
+def latest_user_message(messages: list[dict[str, str]]) -> str:
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return str(message.get("content", "")).strip()
+    return ""
+
+
+def latest_project_hint(memory_data: dict[str, Any]) -> str:
+    memories = memory_data.get("long_term", [])
+    if not isinstance(memories, list):
+        return ""
+    for item in reversed(memories):
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "")).strip()
+        text = str(item.get("text", "")).strip()
+        if text and category in {"project", "learning", "preference", "persona"}:
+            return text
+    return ""
+
+
+def is_project_like(text: str) -> bool:
+    keywords = (
+        "樱茗",
+        "桌宠",
+        "记忆",
+        "画像",
+        "deepseek",
+        "api",
+        "模型",
+        "代码",
+        "ui",
+        "界面",
+        "时间",
+        "问候",
+        "vtuber",
+        "live2d",
+        "项目",
+    )
+    lower = text.lower()
+    return any(keyword in lower for keyword in keywords)
+
+
+def compact_text(text: str, limit: int) -> str:
+    compacted = " ".join(text.split())
+    if len(compacted) <= limit:
+        return compacted
+    return compacted[: max(0, limit - 1)].rstrip() + "..."

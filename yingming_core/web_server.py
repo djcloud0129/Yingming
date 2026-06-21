@@ -30,6 +30,10 @@ class YingmingRequestHandler(BaseHTTPRequestHandler):
             self.send_json(self.server.service.state())
             return
 
+        if parsed.path == "/api/welcome":
+            self.send_json(self.server.service.welcome(use_model=True))
+            return
+
         self.serve_static(parsed.path)
 
     def do_POST(self) -> None:
