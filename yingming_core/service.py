@@ -19,6 +19,7 @@ from yingming_core.events import EventBus
 from yingming_core.greetings import contextual_welcome_text, proactive_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient, friendly_llm_error
 from yingming_core.memory import MemoryStore
+from yingming_core.memory_retrieval import format_memory_context, retrieve_relevant_memories
 from yingming_core.topic_state import TopicState, detect_topic_state, topic_blocks_proactive
 from yingming_core.settings import (
     ModelSettings,
@@ -257,6 +258,7 @@ class YingmingService:
                 "mode": "local",
                 "memories_added": [],
                 "memory_suggestions": [],
+                "retrieved_memories": [],
                 "history": load_recent_history(self.history_path, limit=80),
                 "dialogue_state": dialogue_dict,
                 "topic_state": topic_dict,
@@ -266,12 +268,22 @@ class YingmingService:
             }
 
         memory_data = self.memory.load()
+        profile_text = self.read_profile()
         dialogue_state = detect_dialogue_state(user_text, recent_messages, memory_data)
         topic_state = detect_topic_state(recent_messages, user_text)
+        retrieved_memories = retrieve_relevant_memories(
+            memory_data,
+            user_text,
+            recent_messages=recent_messages,
+            profile_text=profile_text,
+        )
+        retrieved_dicts = [item.as_dict() for item in retrieved_memories]
+        if retrieved_dicts:
+            record("memory.retrieved", {"count": len(retrieved_dicts), "items": retrieved_dicts})
         messages = build_messages(
             self.read_persona(),
-            self.read_profile(),
-            self.memory.as_prompt_text(),
+            profile_text,
+            format_memory_context(memory_data, retrieved_memories),
             recent_messages,
             user_text,
             active_model=self.client.settings.display_name if self.client.available else "",
@@ -329,6 +341,7 @@ class YingmingService:
             "mode": mode,
             "memories_added": [],
             "memory_suggestions": suggestion_dicts,
+            "retrieved_memories": retrieved_dicts,
             "history": load_recent_history(self.history_path, limit=80),
             "dialogue_state": dialogue_dict,
             "topic_state": topic_dict,

@@ -65,6 +65,18 @@ class ServiceEventTests(unittest.TestCase):
             self.assertIn("body_state", result)
             self.assertGreaterEqual(len(service.state()["events"]), len(result["events"]))
 
+    def test_reply_emits_retrieved_memory_event(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            service = YingmingService(Path(temp_dir))
+            service.memory.add("用户喜欢聊科幻电影《降临》。", category="preference", source="test")
+
+            result = service.reply("我们继续聊降临吧")
+
+            event_types = [event["type"] for event in result["events"]]
+            self.assertIn("memory.retrieved", event_types)
+            memory_event = next(event for event in result["events"] if event["type"] == "memory.retrieved")
+            self.assertEqual(result["retrieved_memories"][0]["id"], memory_event["payload"]["items"][0]["id"])
+
 
 if __name__ == "__main__":
     unittest.main()

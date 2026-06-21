@@ -8,6 +8,7 @@ from yingming_core.dialogue_state import detect_dialogue_state
 from yingming_core.greetings import current_greeting
 from yingming_core.llm import LLMError, Message, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
+from yingming_core.memory_retrieval import format_memory_context, retrieve_relevant_memories
 from yingming_core.topic_state import detect_topic_state
 
 
@@ -83,17 +84,24 @@ def run_chat(project_root: Path) -> None:
             print(f"樱茗：好，我记住了：{item.text}")
             continue
 
+        memory_data = memory.load()
+        retrieved_memories = retrieve_relevant_memories(
+            memory_data,
+            user_text,
+            recent_messages=recent_messages,
+            profile_text=profile,
+        )
         messages = build_messages(
             persona,
             profile,
-            memory.as_prompt_text(),
+            format_memory_context(memory_data, retrieved_memories),
             recent_messages,
             user_text,
             active_model=client.settings.display_name if client.available else "",
             dialogue_state_text=detect_dialogue_state(
                 user_text,
                 recent_messages,
-                memory.load(),
+                memory_data,
             ).as_prompt_text(),
             topic_state_text=detect_topic_state(recent_messages, user_text).as_prompt_text(),
         )
