@@ -15,7 +15,7 @@ from yingming_core.dialogue_state import (
     STATES,
 )
 from yingming_core.greetings import contextual_welcome_text, proactive_text
-from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
+from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient, friendly_llm_error
 from yingming_core.memory import MemoryStore
 from yingming_core.topic_state import TopicState, detect_topic_state, topic_blocks_proactive
 from yingming_core.settings import (
@@ -221,9 +221,10 @@ class YingmingService:
             assistant_text = self.client.complete(messages) if self.client.available else self.offline.complete(messages)
         except LLMError as exc:
             mode = "fallback"
+            readable_error = friendly_llm_error(exc)
             assistant_text = (
-                "模型那边暂时没有接上，我先用自己的小纸条回答你。\n"
-                f"接口信息：{exc}\n\n"
+                "DeepSeek 这次没有接稳，我先用本地模式接住你。\n"
+                f"{readable_error}\n\n"
                 f"{self.offline.complete(messages)}"
             )
 
@@ -390,6 +391,20 @@ class YingmingService:
         save_model_settings(self.project_root, settings)
         self.client = OpenAICompatibleClient(self.project_root)
         return {"model": redacted_model_settings(self.client.settings)}
+
+    def test_model_connection(self, settings: ModelSettings | None = None) -> dict[str, Any]:
+        client = OpenAICompatibleClient(self.project_root, settings=settings) if settings else self.client
+        if not client.available:
+            return {"ok": False, "message": friendly_llm_error("未配置 DeepSeek/OpenAI API key。")}
+        messages = [
+            {"role": "system", "content": "请用中文简短回复。"},
+            {"role": "user", "content": "请只回复：樱茗连接正常。"},
+        ]
+        try:
+            reply = client.complete(messages, max_tokens=40, temperature=0.2)
+        except LLMError as exc:
+            return {"ok": False, "message": friendly_llm_error(exc)}
+        return {"ok": True, "message": f"连接成功：{clip_text(reply, 40)}"}
 
     def deepseek_defaults(self, api_key: str = "") -> ModelSettings:
         return deepseek_default_settings(api_key=api_key)

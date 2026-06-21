@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import ssl
+import time
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -15,6 +16,30 @@ Message = dict[str, str]
 
 class LLMError(RuntimeError):
     pass
+
+
+def friendly_llm_error(error: BaseException | str) -> str:
+    text = str(error).strip()
+    lower = text.lower()
+    if "未配置" in text or "api key" in lower and "未配置" in text:
+        return "还没有保存 API Key。打开“连接”填入 DeepSeek API Key 后再试。"
+    if "401" in lower or "unauthorized" in lower:
+        return "API Key 没通过验证，可能填错、失效，或复制时多了空格。"
+    if "402" in lower or "quota" in lower or "balance" in lower:
+        return "账号额度或余额可能不足，DeepSeek 那边拒绝了这次请求。"
+    if "404" in lower and "model" in lower:
+        return "模型名可能不可用。可以点“连接”里的“DeepSeek 默认”恢复默认模型后再试。"
+    if "429" in lower or "rate limit" in lower:
+        return "请求太频繁了，DeepSeek 暂时限流。稍等一会儿再发就好。"
+    if "timeout" in lower or "timed out" in lower or "超时" in text:
+        return "连接 DeepSeek 超时了，可能是网络慢、代理不稳，或服务端一时没响应。"
+    if "ssl" in lower or "unexpected_eof" in lower or "eof occurred" in lower or "protocol" in lower:
+        return "连接 DeepSeek 时网络/代理提前断开了（SSL 连接中断）。可以稍后重试，或检查代理、防火墙和 Base URL。"
+    if "无法连接" in text or "urlopen" in lower or "connection" in lower:
+        return "暂时连不上 DeepSeek。可以检查网络、代理、防火墙，或打开“连接”测试一下。"
+    if text:
+        return f"模型接口暂时不可用：{clip_text(text, 120)}"
+    return "模型接口暂时不可用，但本地备用回复还能继续陪你。"
 
 
 class OpenAICompatibleClient:
@@ -62,19 +87,37 @@ class OpenAICompatibleClient:
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
+                "Accept": "application/json",
+                "User-Agent": "YingmingPet/0.1",
             },
         )
 
-        try:
-            with urlopen(request, timeout=90, context=ssl.create_default_context()) as response:
-                data = json.loads(response.read().decode("utf-8"))
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")
-            raise LLMError(f"模型接口返回错误：HTTP {exc.code} {detail}") from exc
-        except URLError as exc:
-            raise LLMError(f"无法连接模型接口：{exc.reason}") from exc
-        except TimeoutError as exc:
-            raise LLMError("模型接口请求超时。") from exc
+        data: dict[str, Any]
+        for attempt in range(2):
+            try:
+                with urlopen(request, timeout=90, context=ssl.create_default_context()) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                break
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise LLMError(f"模型接口返回错误：HTTP {exc.code} {detail}") from exc
+            except TimeoutError as exc:
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+                raise LLMError("模型接口请求超时。") from exc
+            except ssl.SSLError as exc:
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+                raise LLMError(f"无法连接模型接口：{exc}") from exc
+            except URLError as exc:
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+                raise LLMError(f"无法连接模型接口：{exc.reason}") from exc
+        else:
+            raise LLMError("模型接口请求失败。")
 
         try:
             return data["choices"][0]["message"]["content"].strip()
@@ -123,3 +166,10 @@ class OfflineYingming:
             "我会尽量按樱茗的方式：先听清楚，再轻轻地帮你整理。"
             "你可以继续说，我在。"
         )
+
+
+def clip_text(text: str, limit: int) -> str:
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "..."

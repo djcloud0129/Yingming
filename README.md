@@ -43,6 +43,8 @@ Base URL: https://api.deepseek.com
 Model: deepseek-v4-flash
 ```
 
+`连接` 窗口里可以先点 `测试连接`，樱茗会发一条很小的请求检查 API Key、Base URL、模型名和当前网络是否能用；失败时只显示简短原因，不会把底层 SSL/HTTP 错误整段塞进聊天气泡。
+
 也可以用环境变量启动：
 
 ```powershell

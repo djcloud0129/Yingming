@@ -89,7 +89,7 @@ STAGE_VISUALS = {
     "thinking": StageVisual("在想", "整理思路", "think"),
     "sleepy": StageVisual("困困", "声音放轻", "sleep"),
     "memory": StageVisual("记下", "翻看记忆", "memory"),
-    "waiting": StageVisual("等你", "安静听着", "wait"),
+    "waiting": StageVisual("安静", "等你回答", "wait"),
     "error": StageVisual("抱歉", "有点慌张", "shake"),
     "typing": StageVisual("在听", "看着你打字", "wait"),
     "welcome": StageVisual("回来啦", "向你招呼", "nod"),
@@ -437,6 +437,8 @@ class YingmingPetApp:
             state = self.service.state().get("dialogue_state", {})
         state_label = str(state.get("label") or "自然闲聊")
         mood_label = MOOD_LABELS.get(str(state.get("mood") or "normal"), "自然")
+        if state_label in {mood_label, "等你回答"}:
+            return state_label
         return f"{state_label} · {mood_label}"
 
     def topic_state_label_text(self, state: dict[str, Any] | None = None) -> str:
@@ -1180,8 +1182,8 @@ class YingmingPetApp:
 
         window = tk.Toplevel(self.root)
         window.title("连接 DeepSeek")
-        window.geometry("520x640+760+80")
-        window.minsize(520, 640)
+        window.geometry("520x680+760+40")
+        window.minsize(520, 680)
         window.resizable(True, False)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
@@ -1280,8 +1282,20 @@ class YingmingPetApp:
         )
         proactive_menu.grid(row=13, column=0, sticky="ew")
 
+        test_status_var = tk.StringVar(value="可以先测试连接，确认网络和 API Key 都能用。")
+        tk.Label(
+            form,
+            textvariable=test_status_var,
+            bg="#f7f1e8",
+            fg="#6f7f56",
+            justify="left",
+            wraplength=470,
+            font=("Microsoft YaHei UI", 9),
+        ).grid(row=14, column=0, sticky="ew", pady=(10, 0))
+
         buttons = tk.Frame(window, bg="#f7f1e8")
         buttons.pack(side="bottom", fill="x", padx=12, pady=(0, 12))
+        test_queue: queue.Queue[dict[str, Any]] = queue.Queue()
 
         def fill_deepseek_defaults() -> None:
             base_url_entry.delete(0, "end")
@@ -1289,14 +1303,14 @@ class YingmingPetApp:
             model_entry.delete(0, "end")
             model_entry.insert(0, DEFAULT_DEEPSEEK_MODEL)
 
-        def save() -> None:
+        def collect_settings() -> ModelSettings | None:
             try:
                 temperature = float(temperature_entry.get().strip() or "0.8")
             except ValueError:
                 messagebox.showwarning("樱茗", "温度需要是数字，例如 0.8。", parent=window)
-                return
+                return None
 
-            new_settings = replace(
+            return replace(
                 settings,
                 provider="deepseek",
                 api_key=api_key_entry.get().strip(),
@@ -1308,12 +1322,46 @@ class YingmingPetApp:
                 proactive_mode=proactive_label_to_mode.get(proactive_mode_var.get(), "normal"),
                 deepseek_thinking="enabled" if thinking_var.get() else "disabled",
             )
+
+        def save() -> None:
+            new_settings = collect_settings()
+            if new_settings is None:
+                return
             self.service.save_model_settings(new_settings)
             self.refresh_mode_label()
             self.last_activity_at = time.monotonic()
             self.last_proactive_at = time.monotonic()
             self.set_bubble("DeepSeek 已保存。你可以直接和我说话，我会带着记忆体一起回应。")
             window.destroy()
+
+        def test_connection_worker(candidate_settings: ModelSettings) -> None:
+            test_queue.put(self.service.test_model_connection(candidate_settings))
+
+        def poll_test_connection() -> None:
+            try:
+                result = test_queue.get_nowait()
+            except queue.Empty:
+                if window.winfo_exists():
+                    window.after(150, poll_test_connection)
+                return
+
+            test_button.configure(state="normal")
+            message = str(result.get("message") or "")
+            if result.get("ok"):
+                test_status_var.set(message or "连接成功。")
+                self.set_stage_visual(stage_visual_for_mood("welcome"))
+            else:
+                test_status_var.set(message or "连接失败。")
+                self.set_stage_visual(stage_visual_for_mood("error"))
+
+        def start_test_connection() -> None:
+            candidate_settings = collect_settings()
+            if candidate_settings is None:
+                return
+            test_status_var.set("正在测试 DeepSeek 连接...")
+            test_button.configure(state="disabled")
+            threading.Thread(target=test_connection_worker, args=(candidate_settings,), daemon=True).start()
+            window.after(150, poll_test_connection)
 
         tk.Button(
             buttons,
@@ -1327,6 +1375,19 @@ class YingmingPetApp:
             pady=7,
             font=("Microsoft YaHei UI", 10),
         ).pack(side="left")
+        test_button = tk.Button(
+            buttons,
+            text="测试连接",
+            command=start_test_connection,
+            bg="#ffffff",
+            fg="#42523d",
+            relief="solid",
+            bd=1,
+            padx=12,
+            pady=7,
+            font=("Microsoft YaHei UI", 10),
+        )
+        test_button.pack(side="left", padx=(8, 0))
         tk.Button(
             buttons,
             text="关闭",

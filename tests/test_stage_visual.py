@@ -18,6 +18,12 @@ class StageVisualTests(unittest.TestCase):
         self.assertEqual(visual.expression, "在听")
         self.assertIn("打字", visual.action)
 
+    def test_waiting_stage_is_quiet_not_repetitive(self) -> None:
+        visual = stage_visual_for_mood("waiting")
+
+        self.assertEqual(visual.expression, "安静")
+        self.assertIn("回答", visual.action)
+
     def test_unknown_mood_falls_back_to_normal(self) -> None:
         visual = stage_visual_for_mood("unknown")
 
