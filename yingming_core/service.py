@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from yingming_core.chat import append_history, build_messages, load_recent_history
+from yingming_core.greetings import welcome_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
 from yingming_core.settings import (
@@ -44,6 +45,7 @@ class YingmingService:
             "memory": self.memory.load(),
             "memory_text": self.memory.as_readable_text(),
             "history": load_recent_history(self.history_path, limit=80),
+            "welcome": welcome_text(),
         }
 
     def reply(self, user_text: str) -> dict[str, Any]:

@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
+from yingming_core.greetings import current_greeting
 from yingming_core.llm import LLMError, Message, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
 
@@ -42,7 +43,7 @@ def run_chat(project_root: Path) -> None:
     offline = OfflineYingming()
     recent_messages = load_recent_history(history_path, limit=12, drop_offline_placeholders=client.available)
 
-    print("樱茗：晚上好。我在这里。输入 /帮助 可以看指令，输入 /退出 就能结束。")
+    print(f"樱茗：{current_greeting()}。我在这里。输入 /帮助 可以看指令，输入 /退出 就能结束。")
     if not client.available:
         print("樱茗：现在还没有配置模型 API，我会先用离线模式陪你试运行。")
     else:

@@ -9,6 +9,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
+from yingming_core.greetings import welcome_text
 from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
 from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
@@ -142,7 +143,7 @@ class YingmingPetApp:
         self.bubble_scrollbar.configure(command=self.bubble.yview)
         self.bubble_scrollbar.pack(side="right", fill="y")
         self.bubble.pack(side="left", fill="both", expand=True)
-        self.set_bubble("晚上好。我在这里。你可以慢慢说。")
+        self.set_bubble(welcome_text())
 
         self.input_frame = tk.Frame(shell, bg="#f7f1e8")
         self.input_frame.pack(fill="x")

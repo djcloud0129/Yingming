@@ -2,6 +2,7 @@ const state = {
   history: [],
   profile: "",
   memory: null,
+  welcome: "",
   sending: false,
 };
 
@@ -69,6 +70,7 @@ async function refreshState() {
   state.history = data.history ?? [];
   state.profile = data.profile ?? "";
   state.memory = data.memory ?? {};
+  state.welcome = data.welcome ?? fallbackWelcomeText();
   els.profileEditor.value = state.profile;
   renderModel(data.model);
   renderMessages();
@@ -85,7 +87,7 @@ function renderMessages() {
   els.messages.replaceChildren();
 
   if (state.history.length === 0) {
-    addMessage("assistant", "晚上好。我在这里。你可以慢慢说。");
+    addMessage("assistant", state.welcome || fallbackWelcomeText());
     return;
   }
 
@@ -263,3 +265,19 @@ function scrollMessages() {
   els.messages.scrollTop = els.messages.scrollHeight;
 }
 
+function fallbackWelcomeText() {
+  const hour = new Date().getHours();
+  let greeting = "夜深了";
+  if (hour >= 5 && hour < 9) {
+    greeting = "早上好";
+  } else if (hour >= 9 && hour < 11) {
+    greeting = "上午好";
+  } else if (hour >= 11 && hour < 14) {
+    greeting = "中午好";
+  } else if (hour >= 14 && hour < 18) {
+    greeting = "下午好";
+  } else if (hour >= 18 && hour < 23) {
+    greeting = "晚上好";
+  }
+  return `${greeting}。我在这里。你可以慢慢说。`;
+}
