@@ -223,7 +223,7 @@ class YingmingService:
             mode = "fallback"
             readable_error = friendly_llm_error(exc)
             assistant_text = (
-                "DeepSeek 这次没有接稳，我先用本地模式接住你。\n"
+                "DeepSeek 刚刚断了一下，我先接住这一句。\n"
                 f"{readable_error}\n\n"
                 f"{self.offline.complete(messages)}"
             )

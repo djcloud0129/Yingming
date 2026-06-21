@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import shutil
 import ssl
+import subprocess
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -92,37 +95,106 @@ class OpenAICompatibleClient:
             },
         )
 
-        data: dict[str, Any]
-        for attempt in range(2):
-            try:
-                with urlopen(request, timeout=90, context=ssl.create_default_context()) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-                break
-            except HTTPError as exc:
-                detail = exc.read().decode("utf-8", errors="replace")
-                raise LLMError(f"模型接口返回错误：HTTP {exc.code} {detail}") from exc
-            except TimeoutError as exc:
-                if attempt == 0:
-                    time.sleep(0.6)
-                    continue
-                raise LLMError("模型接口请求超时。") from exc
-            except ssl.SSLError as exc:
-                if attempt == 0:
-                    time.sleep(0.6)
-                    continue
-                raise LLMError(f"无法连接模型接口：{exc}") from exc
-            except URLError as exc:
-                if attempt == 0:
-                    time.sleep(0.6)
-                    continue
-                raise LLMError(f"无法连接模型接口：{exc.reason}") from exc
-        else:
-            raise LLMError("模型接口请求失败。")
+        data = self._complete_with_urllib(request)
 
         try:
             return data["choices"][0]["message"]["content"].strip()
         except (KeyError, IndexError, TypeError) as exc:
             raise LLMError(f"模型接口返回格式无法识别：{data}") from exc
+
+    def _complete_with_urllib(self, request: Request) -> dict[str, Any]:
+        last_error: LLMError | None = None
+        for attempt in range(2):
+            try:
+                with urlopen(request, timeout=90, context=ssl.create_default_context()) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")
+                raise LLMError(f"模型接口返回错误：HTTP {exc.code} {detail}") from exc
+            except TimeoutError as exc:
+                last_error = LLMError("模型接口请求超时。")
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+                raise last_error from exc
+            except ssl.SSLError as exc:
+                last_error = LLMError(f"无法连接模型接口：{exc}")
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+            except URLError as exc:
+                last_error = LLMError(f"无法连接模型接口：{exc.reason}")
+                if attempt == 0:
+                    time.sleep(0.6)
+                    continue
+
+        if last_error is not None:
+            try:
+                return self._complete_with_curl(request)
+            except LLMError as curl_error:
+                raise curl_error from last_error
+        raise LLMError("模型接口请求失败。")
+
+    def _complete_with_curl(self, request: Request) -> dict[str, Any]:
+        curl_path = shutil.which("curl.exe") or shutil.which("curl")
+        if not curl_path:
+            raise LLMError("模型接口请求失败，且本机没有可用的 curl。")
+
+        body = bytes(request.data or b"")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp_file:
+            temp_file.write(body)
+            temp_path = temp_file.name
+
+        try:
+            completed = subprocess.run(
+                [
+                    curl_path,
+                    "-sS",
+                    "--connect-timeout",
+                    "15",
+                    "--max-time",
+                    "90",
+                    "-o",
+                    "-",
+                    "-w",
+                    "\nYINGMING_HTTP_STATUS:%{http_code}",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-H",
+                    f"Authorization: Bearer {self.api_key}",
+                    "--data-binary",
+                    f"@{temp_path}",
+                    request.full_url,
+                ],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+            )
+        finally:
+            Path(temp_path).unlink(missing_ok=True)
+
+        output = completed.stdout.strip()
+        error_output = completed.stderr.strip()
+        if completed.returncode != 0:
+            raise LLMError(f"无法连接模型接口：{error_output or output or 'curl 请求失败'}")
+
+        marker = "\nYINGMING_HTTP_STATUS:"
+        if marker not in output:
+            raise LLMError(f"模型接口返回格式无法识别：{output or error_output}")
+        body_text, status_text = output.rsplit(marker, 1)
+        try:
+            status = int(status_text.strip())
+        except ValueError as exc:
+            raise LLMError(f"模型接口返回状态无法识别：{status_text}") from exc
+        if status >= 400:
+            raise LLMError(f"模型接口返回错误：HTTP {status} {body_text}")
+
+        try:
+            return json.loads(body_text)
+        except json.JSONDecodeError as exc:
+            raise LLMError(f"模型接口返回格式无法识别：{body_text}") from exc
 
 
 class OfflineYingming:
@@ -162,9 +234,8 @@ class OfflineYingming:
             )
 
         return (
-            "我明白。这次我先用本地备用回复陪你；"
-            "我会尽量按樱茗的方式：先听清楚，再轻轻地帮你整理。"
-            "你可以继续说，我在。"
+            "我明白。先把你这句话放稳一点："
+            "我会先听清楚，再轻轻地帮你整理。你可以继续说，我在。"
         )
 
 
