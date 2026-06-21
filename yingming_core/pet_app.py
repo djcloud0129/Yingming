@@ -75,6 +75,7 @@ class YingmingPetApp:
         self.root.after(PROACTIVE_CHECK_MS, self.poll_proactive_behavior)
 
     def build_ui(self) -> None:
+        initial_state = self.service.state()
         shell = tk.Frame(self.root, bg="#f7f1e8", padx=12, pady=12)
         shell.pack(fill="both", expand=True)
         shell.bind("<ButtonPress-1>", self.start_drag)
@@ -94,14 +95,26 @@ class YingmingPetApp:
         )
         title.pack(side="left")
 
+        status_panel = tk.Frame(header, bg="#f7f1e8")
+        status_panel.pack(side="right", pady=(3, 0))
+
         self.mode_label = tk.Label(
-            header,
-            text=self.model_label_text(),
+            status_panel,
+            text=self.model_label_text(initial_state),
             bg="#f7f1e8",
             fg="#6f7f56",
             font=("Microsoft YaHei UI", 9),
         )
-        self.mode_label.pack(side="right", pady=(8, 0))
+        self.mode_label.pack(anchor="e")
+
+        self.dialogue_state_label = tk.Label(
+            status_panel,
+            text=self.dialogue_state_label_text(initial_state.get("dialogue_state")),
+            bg="#f7f1e8",
+            fg="#9a6f58",
+            font=("Microsoft YaHei UI", 9),
+        )
+        self.dialogue_state_label.pack(anchor="e")
 
         self.image_label = tk.Label(shell, bg="#f7f1e8", bd=0)
         self.image_label.pack(pady=(8, 8))
@@ -266,13 +279,23 @@ class YingmingPetApp:
                 height=5,
             )
 
-    def model_label_text(self) -> str:
-        state = self.service.state()
+    def model_label_text(self, state: dict[str, Any] | None = None) -> str:
+        state = state or self.service.state()
         model = state.get("model", {})
         return str(model.get("name") or "离线模式")
 
+    def dialogue_state_label_text(self, state: dict[str, Any] | None = None) -> str:
+        if not isinstance(state, dict):
+            state = self.service.state().get("dialogue_state", {})
+        return str(state.get("label") or "自然闲聊")
+
     def refresh_mode_label(self) -> None:
-        self.mode_label.configure(text=self.model_label_text())
+        state = self.service.state()
+        self.mode_label.configure(text=self.model_label_text(state))
+        self.dialogue_state_label.configure(text=self.dialogue_state_label_text(state.get("dialogue_state")))
+
+    def update_dialogue_state_label(self, state: dict[str, Any] | None) -> None:
+        self.dialogue_state_label.configure(text=self.dialogue_state_label_text(state))
 
     def send_message(self) -> None:
         text = self.input_var.get().strip()
@@ -297,6 +320,7 @@ class YingmingPetApp:
                     "reply": result["reply"],
                     "memories_added": result.get("memories_added", []),
                     "memory_suggestions": result.get("memory_suggestions", []),
+                    "dialogue_state": result.get("dialogue_state", {}),
                 }
             )
         except Exception as exc:  # noqa: BLE001 - show local prototype errors in UI.
@@ -337,9 +361,11 @@ class YingmingPetApp:
             if memory_suggestions:
                 reply = f"{reply}\n\n（我整理了 {len(memory_suggestions)} 条待确认记忆，点“记忆体”确认。）"
             self.set_bubble(reply)
+            self.update_dialogue_state_label(result.get("dialogue_state"))
+            self.refresh_mode_label()
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
-        self.refresh_mode_label()
+            self.update_dialogue_state_label({"label": "连接异常"})
 
         self.root.after(120, self.poll_response_queue)
 

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
+from yingming_core.dialogue_state import DialogueState, detect_dialogue_state
 from yingming_core.greetings import contextual_welcome_text, proactive_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
@@ -46,7 +47,22 @@ class YingmingService:
             "memory_text": self.memory.as_readable_text(),
             "history": load_recent_history(self.history_path, limit=80),
             "welcome": self.welcome(use_model=False)["welcome"],
+            "dialogue_state": self.current_dialogue_state().as_dict(),
         }
+
+    def current_dialogue_state(self) -> DialogueState:
+        memory_data = self.memory.load()
+        recent_messages = load_recent_history(
+            self.history_path,
+            limit=8,
+            drop_offline_placeholders=self.client.available,
+        )
+        last_user = ""
+        for message in reversed(recent_messages):
+            if message.get("role") == "user":
+                last_user = str(message.get("content", ""))
+                break
+        return detect_dialogue_state(last_user, recent_messages, memory_data)
 
     def welcome(self, use_model: bool = False) -> dict[str, Any]:
         memory_data = self.memory.load()
@@ -135,6 +151,8 @@ class YingmingService:
             limit=12,
             drop_offline_placeholders=self.client.available,
         )
+        memory_data = self.memory.load()
+        dialogue_state = detect_dialogue_state(user_text, recent_messages, memory_data)
         messages = build_messages(
             self.read_persona(),
             self.read_profile(),
@@ -142,6 +160,7 @@ class YingmingService:
             recent_messages,
             user_text,
             active_model=self.client.settings.display_name if self.client.available else "",
+            dialogue_state_text=dialogue_state.as_prompt_text(),
         )
 
         mode = "online" if self.client.available else "offline"
@@ -165,6 +184,7 @@ class YingmingService:
             "memories_added": [],
             "memory_suggestions": [item.__dict__ for item in memory_suggestions],
             "history": load_recent_history(self.history_path, limit=80),
+            "dialogue_state": dialogue_state.as_dict(),
         }
 
     def remember(self, text: str, category: str = "manual", refresh_profile: bool = True) -> dict[str, Any]:

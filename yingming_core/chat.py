@@ -4,6 +4,7 @@ from datetime import datetime
 import json
 from pathlib import Path
 
+from yingming_core.dialogue_state import detect_dialogue_state
 from yingming_core.greetings import current_greeting
 from yingming_core.llm import LLMError, Message, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
@@ -88,6 +89,11 @@ def run_chat(project_root: Path) -> None:
             recent_messages,
             user_text,
             active_model=client.settings.display_name if client.available else "",
+            dialogue_state_text=detect_dialogue_state(
+                user_text,
+                recent_messages,
+                memory.load(),
+            ).as_prompt_text(),
         )
         try:
             reply = client.complete(messages) if client.available else offline.complete(messages)
@@ -111,6 +117,7 @@ def build_messages(
     recent_messages: list[Message],
     user_text: str,
     active_model: str = "",
+    dialogue_state_text: str = "",
 ) -> list[Message]:
     system = "\n\n".join(
         part
@@ -130,6 +137,7 @@ def build_messages(
                 "细微情绪和自己的判断；但始终坦诚自己是 AI，不假装成人类、现实女友或唯一依靠。"
                 "亲近要自然克制，有分寸地陪伴用户。"
             ),
+            dialogue_state_text,
             "请优先使用中文。回答自然、温柔、具体，不要长篇说教。",
         ]
         if part
