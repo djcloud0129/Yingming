@@ -5,11 +5,12 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from math import ceil
 from pathlib import Path
 from typing import Any
 
+from yingming_core.behavior_protocol import PetAction, motion_offset, pet_action_for_mood
 from yingming_core.dialogue_state import MOOD_LABELS
 from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
@@ -75,45 +76,8 @@ MOOD_STYLES = {
 }
 
 
-@dataclass(frozen=True)
-class StageVisual:
-    expression: str
-    action: str
-    motion: str
-
-
-STAGE_VISUALS = {
-    "normal": StageVisual("微笑", "轻轻呼吸", "breath"),
-    "focused": StageVisual("认真", "靠近看", "focus"),
-    "caring": StageVisual("温柔", "轻轻点头", "nod"),
-    "thinking": StageVisual("在想", "整理思路", "think"),
-    "sleepy": StageVisual("困困", "声音放轻", "sleep"),
-    "memory": StageVisual("记下", "翻看记忆", "memory"),
-    "waiting": StageVisual("安静", "等你回答", "wait"),
-    "error": StageVisual("抱歉", "有点慌张", "shake"),
-    "typing": StageVisual("在听", "看着你打字", "wait"),
-    "welcome": StageVisual("回来啦", "向你招呼", "nod"),
-}
-
-MOTION_FRAMES = {
-    "breath": ((0, 0), (0, -1), (0, 0), (0, 1)),
-    "focus": ((0, 0), (0, -1), (0, -1), (0, 0)),
-    "nod": ((0, 0), (0, 2), (0, 0), (0, -1)),
-    "think": ((-1, 0), (0, -1), (1, 0), (0, 1)),
-    "sleep": ((0, 0), (0, 0), (0, 1), (0, 1)),
-    "memory": ((-1, 0), (0, 0), (1, 0), (0, 0)),
-    "wait": ((0, 0), (0, 0), (0, -1), (0, 0)),
-    "shake": ((-2, 0), (2, 0), (-1, 0), (1, 0), (0, 0)),
-}
-
-
-def stage_visual_for_mood(mood: str) -> StageVisual:
-    return STAGE_VISUALS.get(mood, STAGE_VISUALS["normal"])
-
-
-def motion_offset(motion: str, step: int) -> tuple[int, int]:
-    frames = MOTION_FRAMES.get(motion, MOTION_FRAMES["breath"])
-    return frames[step % len(frames)]
+def stage_visual_for_mood(mood: str) -> PetAction:
+    return pet_action_for_mood(mood)
 
 
 class YingmingPetApp:
@@ -491,7 +455,7 @@ class YingmingPetApp:
         if pulse and mood != previous_mood:
             self.pulse_portrait()
 
-    def set_stage_visual(self, visual: StageVisual, color: str | None = None) -> None:
+    def set_stage_visual(self, visual: PetAction, color: str | None = None) -> None:
         self.current_stage = visual
         label_color = color or MOOD_STYLES.get(self.current_mood, MOOD_STYLES["normal"])["label"]
         self.expression_label.configure(
@@ -504,6 +468,23 @@ class YingmingPetApp:
             fg=label_color,
             bg=MOOD_STYLES.get(self.current_mood, MOOD_STYLES["normal"])["bubble"],
         )
+
+    def apply_pet_action(self, action: dict[str, Any] | None) -> None:
+        if not isinstance(action, dict):
+            return
+        mood = str(action.get("mood") or self.current_mood)
+        visual = PetAction(
+            kind=str(action.get("kind") or "stage"),
+            mood=mood,
+            expression=str(action.get("expression") or stage_visual_for_mood(mood).expression),
+            action=str(action.get("action") or stage_visual_for_mood(mood).action),
+            motion=str(action.get("motion") or stage_visual_for_mood(mood).motion),
+            text=str(action.get("text") or ""),
+            priority=int(action.get("priority") or 0),
+            metadata=action.get("metadata") if isinstance(action.get("metadata"), dict) else {},
+        )
+        color = MOOD_STYLES.get(mood, MOOD_STYLES["normal"])["label"]
+        self.set_stage_visual(visual, color=color)
 
     def handle_input_focus(self, _event: tk.Event[Any]) -> None:
         if not self.is_waiting:
@@ -562,6 +543,8 @@ class YingmingPetApp:
                     "memory_suggestions": result.get("memory_suggestions", []),
                     "dialogue_state": result.get("dialogue_state", {}),
                     "topic_state": result.get("topic_state", {}),
+                    "pet_action": result.get("pet_action", {}),
+                    "events": result.get("events", []),
                 }
             )
         except Exception as exc:  # noqa: BLE001 - show local prototype errors in UI.
@@ -608,6 +591,7 @@ class YingmingPetApp:
             self.update_dialogue_state_label(result.get("dialogue_state"))
             self.update_topic_state_label(result.get("topic_state"))
             self.refresh_mode_label()
+            self.apply_pet_action(result.get("pet_action"))
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
             self.update_dialogue_state_label({"label": "连接异常", "mood": "error"})
@@ -658,6 +642,7 @@ class YingmingPetApp:
         self.set_bubble(message)
         self.update_dialogue_state_label(result.get("dialogue_state"))
         self.update_topic_state_label(result.get("topic_state"))
+        self.apply_pet_action(result.get("pet_action"))
         self.last_proactive_at = now
         self.proactive_sequence += 1
 

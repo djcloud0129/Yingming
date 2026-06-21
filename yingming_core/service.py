@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from yingming_core.behavior_protocol import pet_action_for_dialogue_state
 from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
 from yingming_core.dialogue_state import (
     DialogueState,
@@ -14,6 +15,7 @@ from yingming_core.dialogue_state import (
     is_wait_command,
     STATES,
 )
+from yingming_core.events import EventBus
 from yingming_core.greetings import contextual_welcome_text, proactive_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient, friendly_llm_error
 from yingming_core.memory import MemoryStore
@@ -39,7 +41,11 @@ class YingmingService:
         self.memory = MemoryStore(project_root / "data" / "memory.json")
         self.client = OpenAICompatibleClient(project_root)
         self.offline = OfflineYingming()
+        self.events = EventBus()
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def emit_event(self, event_type: str, payload: dict[str, Any] | None = None, source: str = "service") -> dict[str, Any]:
+        return self.events.emit(event_type, payload=payload, source=source).as_dict()
 
     def state(self) -> dict[str, Any]:
         return {
@@ -57,6 +63,7 @@ class YingmingService:
             "welcome": self.welcome(use_model=False)["welcome"],
             "dialogue_state": self.current_dialogue_state().as_dict(),
             "topic_state": self.current_topic_state().as_dict(),
+            "events": self.events.recent(),
         }
 
     def current_dialogue_state(self) -> DialogueState:
@@ -128,11 +135,26 @@ class YingmingService:
             mode=mode,
             sequence=sequence,
         )
+        dialogue_dict = dialogue_state.as_dict()
+        topic_dict = topic_state.as_dict()
+        pet_action = pet_action_for_dialogue_state(
+            dialogue_dict,
+            text=message,
+            metadata={"trigger": "proactive", "mode": mode},
+        ).as_dict()
+        events = [
+            self.emit_event("proactive.nudge", {"message": message, "mode": mode}, source="service"),
+            self.emit_event("mood.changed", dialogue_dict, source="service"),
+            self.emit_event("topic.updated", topic_dict, source="service"),
+            self.emit_event("pet.action", pet_action, source="service"),
+        ]
         return {
             "message": message,
             "mode": mode,
-            "dialogue_state": dialogue_state.as_dict(),
-            "topic_state": topic_state.as_dict(),
+            "dialogue_state": dialogue_dict,
+            "topic_state": topic_dict,
+            "pet_action": pet_action,
+            "events": events,
         }
 
     def build_online_welcome(
@@ -180,26 +202,44 @@ class YingmingService:
         user_text = user_text.strip()
         if not user_text:
             raise ValueError("消息不能为空。")
+        turn_events: list[dict[str, Any]] = []
+
+        def record(event_type: str, payload: dict[str, Any], source: str = "service") -> None:
+            turn_events.append(self.emit_event(event_type, payload, source=source))
 
         recent_messages = load_recent_history(
             self.history_path,
             limit=12,
             drop_offline_placeholders=self.client.available,
         )
+        record("user.message", {"text": user_text}, source="user")
         if is_wait_command(user_text):
             dialogue_state = STATES["waiting_reply"]
             topic_state = detect_topic_state(recent_messages, user_text)
             assistant_text = "好，我等你。你慢慢想，我不会自己把话题岔开。"
             append_history(self.history_path, "user", user_text)
             append_history(self.history_path, "assistant", assistant_text)
+            dialogue_dict = dialogue_state.as_dict()
+            topic_dict = topic_state.as_dict()
+            pet_action = pet_action_for_dialogue_state(
+                dialogue_dict,
+                text=assistant_text,
+                metadata={"mode": "local", "topic_status": topic_state.status},
+            ).as_dict()
+            record("assistant.reply", {"text": assistant_text, "mode": "local"}, source="assistant")
+            record("mood.changed", dialogue_dict)
+            record("topic.updated", topic_dict)
+            record("pet.action", pet_action)
             return {
                 "reply": assistant_text,
                 "mode": "local",
                 "memories_added": [],
                 "memory_suggestions": [],
                 "history": load_recent_history(self.history_path, limit=80),
-                "dialogue_state": dialogue_state.as_dict(),
-                "topic_state": topic_state.as_dict(),
+                "dialogue_state": dialogue_dict,
+                "topic_state": topic_dict,
+                "pet_action": pet_action,
+                "events": turn_events,
             }
 
         memory_data = self.memory.load()
@@ -227,21 +267,38 @@ class YingmingService:
                 f"{readable_error}\n\n"
                 f"{self.offline.complete(messages)}"
             )
+            record("model.fallback", {"reason": readable_error, "model": self.client.settings.display_name})
 
         append_history(self.history_path, "user", user_text)
         append_history(self.history_path, "assistant", assistant_text)
         memory_suggestions = self.suggest_memories_from_turn(user_text, assistant_text) if mode == "online" else []
         display_state = STATES["waiting_reply"] if assistant_is_waiting_for_user(assistant_text) else dialogue_state
         display_topic = topic_state.with_status("waiting_user") if assistant_is_waiting_for_user(assistant_text) else topic_state
+        dialogue_dict = display_state.as_dict()
+        topic_dict = display_topic.as_dict()
+        suggestion_dicts = [item.__dict__ for item in memory_suggestions]
+        pet_action = pet_action_for_dialogue_state(
+            dialogue_dict,
+            text=assistant_text,
+            metadata={"mode": mode, "topic_status": display_topic.status},
+        ).as_dict()
+        record("assistant.reply", {"text": assistant_text, "mode": mode}, source="assistant")
+        record("mood.changed", dialogue_dict)
+        record("topic.updated", topic_dict)
+        if suggestion_dicts:
+            record("memory.suggested", {"count": len(suggestion_dicts), "items": suggestion_dicts})
+        record("pet.action", pet_action)
 
         return {
             "reply": assistant_text,
             "mode": mode,
             "memories_added": [],
-            "memory_suggestions": [item.__dict__ for item in memory_suggestions],
+            "memory_suggestions": suggestion_dicts,
             "history": load_recent_history(self.history_path, limit=80),
-            "dialogue_state": display_state.as_dict(),
-            "topic_state": display_topic.as_dict(),
+            "dialogue_state": dialogue_dict,
+            "topic_state": topic_dict,
+            "pet_action": pet_action,
+            "events": turn_events,
         }
 
     def remember(self, text: str, category: str = "manual", refresh_profile: bool = True) -> dict[str, Any]:
