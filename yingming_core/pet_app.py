@@ -543,6 +543,7 @@ class YingmingPetApp:
                     "memory_suggestions": result.get("memory_suggestions", []),
                     "dialogue_state": result.get("dialogue_state", {}),
                     "topic_state": result.get("topic_state", {}),
+                    "body_state": result.get("body_state", {}),
                     "pet_action": result.get("pet_action", {}),
                     "events": result.get("events", []),
                 }

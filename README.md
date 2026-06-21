@@ -104,7 +104,9 @@ start_pet.bat
 
 头像区域现在还有一层轻量舞台反馈：樱茗会显示当前表情和动作，例如 `认真 / 靠近看`、`在想 / 整理思路`、`等你 / 安静听着`。头像会随状态轻微呼吸、点头、摇晃或待命；你在输入框打字时，她会切到“在听”的状态。
 
-樱茗内部现在有一层轻量事件总线和行为协议。聊天、回复、mood 变化、话题变化、待确认记忆和头像动作都会生成统一事件，例如 `user.message`、`assistant.reply`、`mood.changed`、`topic.updated`、`memory.suggested`、`pet.action`。这不会改变当前使用方式，但为后续接入语音、Live2D、屏幕感知和更完整的动作状态机打好地基。
+樱茗内部现在有一层轻量事件总线和行为协议。聊天、回复、mood 变化、话题变化、身体状态、待确认记忆和头像动作都会生成统一事件，例如 `user.message`、`assistant.reply`、`mood.changed`、`topic.updated`、`body.state`、`memory.suggested`、`pet.action`。这不会改变当前使用方式，但为后续接入语音、Live2D、屏幕感知和更完整的动作状态机打好地基。
+
+动作状态机 v1 会把事件转换为稳定的身体状态，例如 `idle`、`listening`、`thinking`、`speaking`、`waiting_user`、`comforting`、`focused`、`remembering`、`sleepy` 和 `error`。UI 仍然显示为轻量头像动作，但背后已经有可扩展的状态层。
 
 `记忆体` 会展示待确认记忆和当前长期记忆。接入 DeepSeek 后，樱茗会在每轮聊天后尝试把你明确说出的稳定偏好、目标和项目线索整理成待确认记忆；你确认后才会进入长期记忆。手动新增时也可以先点 `加入待确认`，检查无误后再点 `确认到长期`。如果确实要跳过确认，也可以点 `直接长期`。
 

@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from yingming_core.behavior_protocol import pet_action_for_dialogue_state
+from yingming_core.body_state import BodyStateMachine
 from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
 from yingming_core.dialogue_state import (
     DialogueState,
@@ -42,10 +42,15 @@ class YingmingService:
         self.client = OpenAICompatibleClient(project_root)
         self.offline = OfflineYingming()
         self.events = EventBus()
+        self.body = BodyStateMachine()
         self.history_path.parent.mkdir(parents=True, exist_ok=True)
 
     def emit_event(self, event_type: str, payload: dict[str, Any] | None = None, source: str = "service") -> dict[str, Any]:
         return self.events.emit(event_type, payload=payload, source=source).as_dict()
+
+    def transition_body(self, event_type: str, payload: dict[str, Any] | None = None, source: str = "service") -> dict[str, Any]:
+        state = self.body.transition(event_type, payload)
+        return self.emit_event("body.state", state.as_dict(), source=source)
 
     def state(self) -> dict[str, Any]:
         return {
@@ -63,6 +68,7 @@ class YingmingService:
             "welcome": self.welcome(use_model=False)["welcome"],
             "dialogue_state": self.current_dialogue_state().as_dict(),
             "topic_state": self.current_topic_state().as_dict(),
+            "body_state": self.body.current.as_dict(),
             "events": self.events.recent(),
         }
 
@@ -137,15 +143,18 @@ class YingmingService:
         )
         dialogue_dict = dialogue_state.as_dict()
         topic_dict = topic_state.as_dict()
-        pet_action = pet_action_for_dialogue_state(
-            dialogue_dict,
+        nudge_payload = {"message": message, "mode": mode, "dialogue_state": dialogue_dict, "topic_state": topic_dict}
+        body_event = self.transition_body("proactive.nudge", nudge_payload, source="service")
+        body_state = self.body.current
+        pet_action = body_state.as_pet_action(
             text=message,
             metadata={"trigger": "proactive", "mode": mode},
         ).as_dict()
         events = [
-            self.emit_event("proactive.nudge", {"message": message, "mode": mode}, source="service"),
+            self.emit_event("proactive.nudge", nudge_payload, source="service"),
             self.emit_event("mood.changed", dialogue_dict, source="service"),
             self.emit_event("topic.updated", topic_dict, source="service"),
+            body_event,
             self.emit_event("pet.action", pet_action, source="service"),
         ]
         return {
@@ -153,6 +162,7 @@ class YingmingService:
             "mode": mode,
             "dialogue_state": dialogue_dict,
             "topic_state": topic_dict,
+            "body_state": body_state.as_dict(),
             "pet_action": pet_action,
             "events": events,
         }
@@ -207,12 +217,17 @@ class YingmingService:
         def record(event_type: str, payload: dict[str, Any], source: str = "service") -> None:
             turn_events.append(self.emit_event(event_type, payload, source=source))
 
+        def advance_body(event_type: str, payload: dict[str, Any], source: str = "service") -> None:
+            turn_events.append(self.transition_body(event_type, payload, source=source))
+
         recent_messages = load_recent_history(
             self.history_path,
             limit=12,
             drop_offline_placeholders=self.client.available,
         )
-        record("user.message", {"text": user_text}, source="user")
+        user_payload = {"text": user_text}
+        record("user.message", user_payload, source="user")
+        advance_body("user.message", user_payload, source="user")
         if is_wait_command(user_text):
             dialogue_state = STATES["waiting_reply"]
             topic_state = detect_topic_state(recent_messages, user_text)
@@ -221,14 +236,21 @@ class YingmingService:
             append_history(self.history_path, "assistant", assistant_text)
             dialogue_dict = dialogue_state.as_dict()
             topic_dict = topic_state.as_dict()
-            pet_action = pet_action_for_dialogue_state(
-                dialogue_dict,
+            reply_payload = {
+                "text": assistant_text,
+                "mode": "local",
+                "dialogue_state": dialogue_dict,
+                "topic_state": topic_dict,
+            }
+            record("assistant.reply", reply_payload, source="assistant")
+            record("mood.changed", dialogue_dict)
+            record("topic.updated", topic_dict)
+            advance_body("assistant.reply", reply_payload, source="assistant")
+            body_state = self.body.current
+            pet_action = body_state.as_pet_action(
                 text=assistant_text,
                 metadata={"mode": "local", "topic_status": topic_state.status},
             ).as_dict()
-            record("assistant.reply", {"text": assistant_text, "mode": "local"}, source="assistant")
-            record("mood.changed", dialogue_dict)
-            record("topic.updated", topic_dict)
             record("pet.action", pet_action)
             return {
                 "reply": assistant_text,
@@ -238,6 +260,7 @@ class YingmingService:
                 "history": load_recent_history(self.history_path, limit=80),
                 "dialogue_state": dialogue_dict,
                 "topic_state": topic_dict,
+                "body_state": body_state.as_dict(),
                 "pet_action": pet_action,
                 "events": turn_events,
             }
@@ -257,6 +280,9 @@ class YingmingService:
         )
 
         mode = "online" if self.client.available else "offline"
+        thinking_payload = {"model": self.client.settings.display_name if self.client.available else "local"}
+        record("model.thinking", thinking_payload)
+        advance_body("model.thinking", thinking_payload)
         try:
             assistant_text = self.client.complete(messages) if self.client.available else self.offline.complete(messages)
         except LLMError as exc:
@@ -267,7 +293,9 @@ class YingmingService:
                 f"{readable_error}\n\n"
                 f"{self.offline.complete(messages)}"
             )
-            record("model.fallback", {"reason": readable_error, "model": self.client.settings.display_name})
+            fallback_payload = {"reason": readable_error, "model": self.client.settings.display_name}
+            record("model.fallback", fallback_payload)
+            advance_body("model.fallback", fallback_payload)
 
         append_history(self.history_path, "user", user_text)
         append_history(self.history_path, "assistant", assistant_text)
@@ -277,16 +305,23 @@ class YingmingService:
         dialogue_dict = display_state.as_dict()
         topic_dict = display_topic.as_dict()
         suggestion_dicts = [item.__dict__ for item in memory_suggestions]
-        pet_action = pet_action_for_dialogue_state(
-            dialogue_dict,
-            text=assistant_text,
-            metadata={"mode": mode, "topic_status": display_topic.status},
-        ).as_dict()
-        record("assistant.reply", {"text": assistant_text, "mode": mode}, source="assistant")
+        reply_payload = {
+            "text": assistant_text,
+            "mode": mode,
+            "dialogue_state": dialogue_dict,
+            "topic_state": topic_dict,
+        }
+        record("assistant.reply", reply_payload, source="assistant")
         record("mood.changed", dialogue_dict)
         record("topic.updated", topic_dict)
         if suggestion_dicts:
             record("memory.suggested", {"count": len(suggestion_dicts), "items": suggestion_dicts})
+        advance_body("assistant.reply", reply_payload, source="assistant")
+        body_state = self.body.current
+        pet_action = body_state.as_pet_action(
+            text=assistant_text,
+            metadata={"mode": mode, "topic_status": display_topic.status},
+        ).as_dict()
         record("pet.action", pet_action)
 
         return {
@@ -297,6 +332,7 @@ class YingmingService:
             "history": load_recent_history(self.history_path, limit=80),
             "dialogue_state": dialogue_dict,
             "topic_state": topic_dict,
+            "body_state": body_state.as_dict(),
             "pet_action": pet_action,
             "events": turn_events,
         }

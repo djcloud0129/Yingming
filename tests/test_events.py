@@ -58,8 +58,11 @@ class ServiceEventTests(unittest.TestCase):
             self.assertIn("assistant.reply", event_types)
             self.assertIn("mood.changed", event_types)
             self.assertIn("topic.updated", event_types)
+            self.assertIn("body.state", event_types)
             self.assertIn("pet.action", event_types)
             self.assertEqual(result["pet_action"]["kind"], "stage")
+            self.assertIn("body_state", result["pet_action"]["metadata"])
+            self.assertIn("body_state", result)
             self.assertGreaterEqual(len(service.state()["events"]), len(result["events"]))
 
 
