@@ -5,7 +5,7 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from math import ceil
 from pathlib import Path
 from typing import Any
@@ -75,6 +75,47 @@ MOOD_STYLES = {
 }
 
 
+@dataclass(frozen=True)
+class StageVisual:
+    expression: str
+    action: str
+    motion: str
+
+
+STAGE_VISUALS = {
+    "normal": StageVisual("微笑", "轻轻呼吸", "breath"),
+    "focused": StageVisual("认真", "靠近看", "focus"),
+    "caring": StageVisual("温柔", "轻轻点头", "nod"),
+    "thinking": StageVisual("在想", "整理思路", "think"),
+    "sleepy": StageVisual("困困", "声音放轻", "sleep"),
+    "memory": StageVisual("记下", "翻看记忆", "memory"),
+    "waiting": StageVisual("等你", "安静听着", "wait"),
+    "error": StageVisual("抱歉", "有点慌张", "shake"),
+    "typing": StageVisual("在听", "看着你打字", "wait"),
+    "welcome": StageVisual("回来啦", "向你招呼", "nod"),
+}
+
+MOTION_FRAMES = {
+    "breath": ((0, 0), (0, -1), (0, 0), (0, 1)),
+    "focus": ((0, 0), (0, -1), (0, -1), (0, 0)),
+    "nod": ((0, 0), (0, 2), (0, 0), (0, -1)),
+    "think": ((-1, 0), (0, -1), (1, 0), (0, 1)),
+    "sleep": ((0, 0), (0, 0), (0, 1), (0, 1)),
+    "memory": ((-1, 0), (0, 0), (1, 0), (0, 0)),
+    "wait": ((0, 0), (0, 0), (0, -1), (0, 0)),
+    "shake": ((-2, 0), (2, 0), (-1, 0), (1, 0), (0, 0)),
+}
+
+
+def stage_visual_for_mood(mood: str) -> StageVisual:
+    return STAGE_VISUALS.get(mood, STAGE_VISUALS["normal"])
+
+
+def motion_offset(motion: str, step: int) -> tuple[int, int]:
+    frames = MOTION_FRAMES.get(motion, MOTION_FRAMES["breath"])
+    return frames[step % len(frames)]
+
+
 class YingmingPetApp:
     def __init__(self, project_root: Path, topmost: bool = True):
         self.project_root = project_root
@@ -91,6 +132,8 @@ class YingmingPetApp:
         self.last_proactive_at = 0.0
         self.proactive_sequence = 0
         self.current_mood = "normal"
+        self.current_stage = stage_visual_for_mood("normal")
+        self.animation_step = 0
         self.drag_start_x = 0
         self.drag_start_y = 0
 
@@ -119,6 +162,7 @@ class YingmingPetApp:
         self.root.bind("<Escape>", lambda _event: self.quit())
         self.root.bind("<Button-3>", self.show_menu)
         self.root.after(120, self.poll_response_queue)
+        self.root.after(650, self.animate_stage)
         self.root.after(350, self.start_welcome_refresh)
         self.root.after(PROACTIVE_CHECK_MS, self.poll_proactive_behavior)
 
@@ -193,6 +237,38 @@ class YingmingPetApp:
         self.image_label.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
         self.load_portrait()
 
+        self.expression_label = tk.Label(
+            self.portrait_slot,
+            text=self.current_stage.expression,
+            bg="#fff8f6",
+            fg="#9a6f58",
+            relief="solid",
+            bd=1,
+            padx=6,
+            pady=2,
+            font=("Microsoft YaHei UI", 9, "bold"),
+        )
+        self.expression_label.place(relx=1.0, x=-8, y=8, anchor="ne")
+        self.expression_label.bind("<ButtonPress-1>", self.start_drag)
+        self.expression_label.bind("<B1-Motion>", self.drag)
+        self.expression_label.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
+
+        self.action_label = tk.Label(
+            self.portrait_slot,
+            text=self.current_stage.action,
+            bg="#f7f1e8",
+            fg="#9a6f58",
+            padx=7,
+            pady=2,
+            font=("Microsoft YaHei UI", 8),
+        )
+        self.action_label.place(relx=0.5, rely=1.0, y=-7, anchor="s")
+        self.action_label.bind("<ButtonPress-1>", self.start_drag)
+        self.action_label.bind("<B1-Motion>", self.drag)
+        self.action_label.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
+        self.expression_label.lift()
+        self.action_label.lift()
+
         self.compact_actions = tk.Frame(shell, bg="#f7f1e8")
         tk.Button(
             self.compact_actions,
@@ -260,7 +336,8 @@ class YingmingPetApp:
         )
         self.input_box.pack(side="left", fill="x", expand=True, ipady=8)
         self.input_box.bind("<Return>", lambda _event: self.send_message())
-        self.input_box.bind("<KeyRelease>", lambda _event: self.mark_user_activity())
+        self.input_box.bind("<KeyRelease>", self.handle_input_keyrelease)
+        self.input_box.bind("<FocusIn>", self.handle_input_focus)
 
         self.send_button = tk.Button(
             self.input_frame,
@@ -405,10 +482,49 @@ class YingmingPetApp:
         self.portrait_frame.configure(bg=style["accent"])
         self.bubble.configure(bg=style["bubble"])
         self.input_box.configure(bg=style["bubble"])
-
-        if pulse and mood != self.current_mood:
-            self.pulse_portrait()
+        previous_mood = self.current_mood
         self.current_mood = mood
+        self.set_stage_visual(stage_visual_for_mood(mood), style["label"])
+
+        if pulse and mood != previous_mood:
+            self.pulse_portrait()
+
+    def set_stage_visual(self, visual: StageVisual, color: str | None = None) -> None:
+        self.current_stage = visual
+        label_color = color or MOOD_STYLES.get(self.current_mood, MOOD_STYLES["normal"])["label"]
+        self.expression_label.configure(
+            text=visual.expression,
+            fg=label_color,
+            bg=MOOD_STYLES.get(self.current_mood, MOOD_STYLES["normal"])["bubble"],
+        )
+        self.action_label.configure(
+            text=visual.action,
+            fg=label_color,
+            bg=MOOD_STYLES.get(self.current_mood, MOOD_STYLES["normal"])["bubble"],
+        )
+
+    def handle_input_focus(self, _event: tk.Event[Any]) -> None:
+        if not self.is_waiting:
+            self.set_stage_visual(stage_visual_for_mood("typing"))
+
+    def handle_input_keyrelease(self, _event: tk.Event[Any]) -> None:
+        self.mark_user_activity()
+        if self.is_waiting:
+            return
+        if self.input_var.get().strip():
+            self.set_stage_visual(stage_visual_for_mood("typing"))
+        else:
+            self.set_stage_visual(stage_visual_for_mood(self.current_mood))
+
+    def animate_stage(self) -> None:
+        try:
+            dx, dy = motion_offset(self.current_stage.motion, self.animation_step)
+            self.portrait_frame.place_configure(x=dx, y=dy)
+            self.animation_step += 1
+            delay = 760 if self.current_stage.motion in {"wait", "sleep"} else 520
+            self.root.after(delay, self.animate_stage)
+        except tk.TclError:
+            return
 
     def pulse_portrait(self) -> None:
         try:
@@ -459,8 +575,10 @@ class YingmingPetApp:
         if result.get("type") == "profile_refresh":
             self.is_profile_refreshing = False
             if result.get("ok") and result.get("updated"):
+                self.set_stage_visual(stage_visual_for_mood("memory"))
                 self.set_bubble("画像已经自动更新。这样我会更稳地理解你。")
             elif not result.get("ok"):
+                self.set_stage_visual(stage_visual_for_mood("error"))
                 self.set_bubble(f"画像自动更新暂时失败：{result.get('error', '')}")
             self.root.after(120, self.poll_response_queue)
             return
@@ -469,6 +587,7 @@ class YingmingPetApp:
             self.is_welcome_refreshing = False
             welcome = str(result.get("welcome", "")).strip()
             if welcome and not self.has_user_interacted and not self.is_waiting and not self.is_collapsed:
+                self.set_stage_visual(stage_visual_for_mood("welcome"))
                 self.set_bubble(welcome)
             self.root.after(120, self.poll_response_queue)
             return
@@ -1399,6 +1518,7 @@ class YingmingPetApp:
     def minimize_to_small_pet(self) -> None:
         self.mark_user_activity()
         self.is_collapsed = True
+        self.set_stage_visual(stage_visual_for_mood("waiting"))
         self.input_frame.pack_forget()
         self.actions.pack_forget()
         self.bubble_frame.pack_forget()
@@ -1422,6 +1542,7 @@ class YingmingPetApp:
         if not self.actions.winfo_ismapped():
             self.actions.pack(fill="x", pady=(10, 0))
         self.bubble.configure(height=7)
+        self.set_stage_visual(stage_visual_for_mood("welcome"))
         self.set_bubble("我回来啦。")
         self.input_box.focus_set()
 
