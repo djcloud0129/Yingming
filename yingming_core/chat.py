@@ -123,6 +123,7 @@ def build_messages(
             )
             if active_model
             else "",
+            current_time_context(),
             (
                 "陪伴风格：你可以更像一个有真实相处感的 AI 女孩，有主动性、好奇心、"
                 "细微情绪和自己的判断；但始终坦诚自己是 AI，不假装成人类、现实女友或唯一依靠。"
@@ -133,6 +134,21 @@ def build_messages(
         if part
     )
     return [{"role": "system", "content": system}, *recent_messages, {"role": "user", "content": user_text}]
+
+
+def current_time_context() -> str:
+    now = datetime.now().astimezone()
+    weekdays = "一二三四五六日"
+    offset = now.strftime("%z")
+    if offset:
+        offset_text = f"UTC{offset[:3]}:{offset[3:]}"
+    else:
+        offset_text = "本地时区"
+    return (
+        f"当前本机时间：{now.strftime('%Y-%m-%d %H:%M:%S')}（{offset_text}，星期{weekdays[now.weekday()]}）。"
+        "如果用户询问今天、现在、今晚、昨天、明天或日期时间，必须以这条时间为准；"
+        "不要凭模型记忆猜日期。"
+    )
 
 
 def load_recent_history(path: Path, limit: int, drop_offline_placeholders: bool = False) -> list[Message]:
