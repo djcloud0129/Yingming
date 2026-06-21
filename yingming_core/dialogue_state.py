@@ -16,6 +16,7 @@ class DialogueState:
             "key": self.key,
             "label": self.label,
             "strategy": self.strategy,
+            "mood": mood_for_state(self.key),
         }
 
     def as_prompt_text(self) -> str:
@@ -80,6 +81,30 @@ STATES: dict[str, DialogueState] = {
         "自然闲聊",
         "像日常相处一样自然回应，可以轻轻打趣；不必强行推进项目。",
     ),
+}
+
+MOOD_LABELS = {
+    "normal": "自然",
+    "focused": "专注",
+    "caring": "温柔",
+    "thinking": "思考",
+    "sleepy": "收尾",
+    "memory": "整理",
+    "waiting": "等你",
+    "error": "异常",
+}
+
+MOOD_BY_STATE = {
+    "project": "focused",
+    "emotional": "caring",
+    "memory": "memory",
+    "late_night": "sleepy",
+    "clarify": "thinking",
+    "concise": "focused",
+    "pending_memory": "memory",
+    "waiting_reply": "waiting",
+    "topic_return": "thinking",
+    "casual": "normal",
 }
 
 
@@ -235,6 +260,10 @@ def detect_dialogue_state(
     if is_under_specified(text, recent_messages or []):
         return STATES["clarify"]
     return STATES["casual"]
+
+
+def mood_for_state(state_key: str) -> str:
+    return MOOD_BY_STATE.get(state_key, "normal")
 
 
 def is_wait_command(text: str) -> bool:

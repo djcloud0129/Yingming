@@ -103,13 +103,14 @@ class YingmingService:
         )
         if conversation_waiting_for_user(recent_messages):
             return {"message": "", "mode": mode, "waiting_for_user": True}
+        dialogue_state = self.current_dialogue_state()
         message = proactive_text(
             self.memory.load(),
             recent_messages,
             mode=mode,
             sequence=sequence,
         )
-        return {"message": message, "mode": mode}
+        return {"message": message, "mode": mode, "dialogue_state": dialogue_state.as_dict()}
 
     def build_online_welcome(
         self,

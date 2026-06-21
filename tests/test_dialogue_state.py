@@ -8,6 +8,7 @@ from yingming_core.dialogue_state import (
     assistant_is_waiting_for_user,
     conversation_waiting_for_user,
     detect_dialogue_state,
+    mood_for_state,
 )
 
 
@@ -41,6 +42,16 @@ class DialogueStateTests(unittest.TestCase):
         messages = build_messages("", "", "", [], "我有点累", dialogue_state_text=prompt)
         self.assertIn("当前临时对话状态", messages[0]["content"])
         self.assertIn("陪伴模式", messages[0]["content"])
+
+    def test_state_dict_includes_mood(self) -> None:
+        state = detect_dialogue_state("我今天有点累").as_dict()
+        self.assertEqual(state["mood"], "caring")
+
+    def test_project_state_maps_to_focused_mood(self) -> None:
+        self.assertEqual(mood_for_state("project"), "focused")
+
+    def test_waiting_state_maps_to_waiting_mood(self) -> None:
+        self.assertEqual(mood_for_state("waiting_reply"), "waiting")
 
     def test_detects_wait_command(self) -> None:
         state = detect_dialogue_state("等我一下，我想想")

@@ -10,6 +10,7 @@ from math import ceil
 from pathlib import Path
 from typing import Any
 
+from yingming_core.dialogue_state import MOOD_LABELS
 from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
 from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL, PROACTIVE_MODE_LABELS
@@ -30,6 +31,48 @@ PROACTIVE_COOLDOWN_SECONDS = {
     "normal": 10 * 60,
     "warm": 4 * 60,
 }
+MOOD_STYLES = {
+    "normal": {
+        "accent": "#cbbd99",
+        "bubble": "#fff8f6",
+        "label": "#9a6f58",
+    },
+    "focused": {
+        "accent": "#5f7f8f",
+        "bubble": "#f4fbff",
+        "label": "#4d7281",
+    },
+    "caring": {
+        "accent": "#cf8792",
+        "bubble": "#fff4f6",
+        "label": "#b46875",
+    },
+    "thinking": {
+        "accent": "#b89558",
+        "bubble": "#fff9ec",
+        "label": "#8b7040",
+    },
+    "sleepy": {
+        "accent": "#7c7396",
+        "bubble": "#f7f5ff",
+        "label": "#6d6285",
+    },
+    "memory": {
+        "accent": "#7f9b69",
+        "bubble": "#f6fbf2",
+        "label": "#657f52",
+    },
+    "waiting": {
+        "accent": "#aa8f62",
+        "bubble": "#fffaf0",
+        "label": "#8b744e",
+    },
+    "error": {
+        "accent": "#9b5b5b",
+        "bubble": "#fff4f4",
+        "label": "#8a3b3b",
+    },
+}
 
 
 class YingmingPetApp:
@@ -47,6 +90,7 @@ class YingmingPetApp:
         self.last_activity_at = time.monotonic()
         self.last_proactive_at = 0.0
         self.proactive_sequence = 0
+        self.current_mood = "normal"
         self.drag_start_x = 0
         self.drag_start_y = 0
 
@@ -120,8 +164,21 @@ class YingmingPetApp:
         )
         self.dialogue_state_label.pack(anchor="e")
 
-        self.image_label = tk.Label(shell, bg="#f7f1e8", bd=0)
-        self.image_label.pack(pady=(8, 8))
+        self.portrait_slot = tk.Frame(shell, width=196, height=196, bg="#f7f1e8")
+        self.portrait_slot.pack(pady=(8, 8))
+        self.portrait_slot.pack_propagate(False)
+        self.portrait_slot.bind("<ButtonPress-1>", self.start_drag)
+        self.portrait_slot.bind("<B1-Motion>", self.drag)
+        self.portrait_slot.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
+
+        self.portrait_frame = tk.Frame(self.portrait_slot, bg=MOOD_STYLES["normal"]["accent"], padx=3, pady=3)
+        self.portrait_frame.place(relx=0.5, rely=0.5, anchor="center")
+        self.portrait_frame.bind("<ButtonPress-1>", self.start_drag)
+        self.portrait_frame.bind("<B1-Motion>", self.drag)
+        self.portrait_frame.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
+
+        self.image_label = tk.Label(self.portrait_frame, bg="#f7f1e8", bd=0)
+        self.image_label.pack()
         self.image_label.bind("<ButtonPress-1>", self.start_drag)
         self.image_label.bind("<B1-Motion>", self.drag)
         self.image_label.bind("<Double-Button-1>", lambda _event: self.restore_full_window())
@@ -210,6 +267,7 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10, "bold"),
         )
         self.send_button.pack(side="right", padx=(8, 0))
+        self.apply_dialogue_visual(initial_state.get("dialogue_state"), pulse=False)
 
         self.actions = tk.Frame(shell, bg="#f7f1e8")
         self.actions.pack(fill="x", pady=(10, 0))
@@ -291,15 +349,45 @@ class YingmingPetApp:
     def dialogue_state_label_text(self, state: dict[str, Any] | None = None) -> str:
         if not isinstance(state, dict):
             state = self.service.state().get("dialogue_state", {})
-        return str(state.get("label") or "自然闲聊")
+        state_label = str(state.get("label") or "自然闲聊")
+        mood_label = MOOD_LABELS.get(str(state.get("mood") or "normal"), "自然")
+        return f"{state_label} · {mood_label}"
 
     def refresh_mode_label(self) -> None:
         state = self.service.state()
         self.mode_label.configure(text=self.model_label_text(state))
-        self.dialogue_state_label.configure(text=self.dialogue_state_label_text(state.get("dialogue_state")))
+        self.apply_dialogue_visual(state.get("dialogue_state"), pulse=False)
 
     def update_dialogue_state_label(self, state: dict[str, Any] | None) -> None:
-        self.dialogue_state_label.configure(text=self.dialogue_state_label_text(state))
+        self.apply_dialogue_visual(state)
+
+    def apply_dialogue_visual(self, state: dict[str, Any] | None, pulse: bool = True) -> None:
+        if not isinstance(state, dict):
+            state = {}
+        mood = str(state.get("mood") or "normal")
+        if mood not in MOOD_STYLES:
+            mood = "normal"
+        style = MOOD_STYLES[mood]
+
+        self.dialogue_state_label.configure(
+            text=self.dialogue_state_label_text(state),
+            fg=style["label"],
+        )
+        self.mode_label.configure(fg=style["label"])
+        self.portrait_frame.configure(bg=style["accent"])
+        self.bubble.configure(bg=style["bubble"])
+        self.input_box.configure(bg=style["bubble"])
+
+        if pulse and mood != self.current_mood:
+            self.pulse_portrait()
+        self.current_mood = mood
+
+    def pulse_portrait(self) -> None:
+        try:
+            self.portrait_frame.configure(padx=5, pady=5)
+            self.root.after(160, lambda: self.portrait_frame.configure(padx=3, pady=3))
+        except tk.TclError:
+            pass
 
     def send_message(self) -> None:
         text = self.input_var.get().strip()
@@ -311,6 +399,7 @@ class YingmingPetApp:
         self.is_waiting = True
         self.input_var.set("")
         self.set_busy(True)
+        self.update_dialogue_state_label({"label": "思考中", "mood": "thinking"})
         self.set_bubble("我在想。")
 
         worker = threading.Thread(target=self.reply_worker, args=(text,), daemon=True)
@@ -370,7 +459,7 @@ class YingmingPetApp:
             self.refresh_mode_label()
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
-            self.update_dialogue_state_label({"label": "连接异常"})
+            self.update_dialogue_state_label({"label": "连接异常", "mood": "error"})
 
         self.root.after(120, self.poll_response_queue)
 
@@ -416,6 +505,7 @@ class YingmingPetApp:
             return
 
         self.set_bubble(message)
+        self.update_dialogue_state_label(result.get("dialogue_state"))
         self.last_proactive_at = now
         self.proactive_sequence += 1
 
@@ -429,13 +519,14 @@ class YingmingPetApp:
         self.manual_waiting_for_reply = True
         self.last_proactive_at = time.monotonic()
         self.set_bubble("好，我等你回答。刚才的话题我先捧着，不往别处跑。")
-        self.update_dialogue_state_label({"label": "等你回答"})
+        self.update_dialogue_state_label({"label": "等你回答", "mood": "waiting"})
 
     def send_system_message(self, text: str) -> None:
         self.mark_user_activity()
         self.manual_waiting_for_reply = False
         self.is_waiting = True
         self.set_busy(True)
+        self.update_dialogue_state_label({"label": "回到话题", "mood": "thinking"})
         self.set_bubble("我把话题捡回来。")
         threading.Thread(target=self.reply_worker, args=(text,), daemon=True).start()
 

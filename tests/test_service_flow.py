@@ -30,6 +30,16 @@ class ServiceFlowTests(unittest.TestCase):
 
             self.assertEqual(service.current_dialogue_state().key, "waiting_reply")
 
+    def test_proactive_nudge_returns_dialogue_state_mood(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = YingmingService(root)
+
+            result = service.proactive_nudge()
+
+            self.assertIn("dialogue_state", result)
+            self.assertIn("mood", result["dialogue_state"])
+
 
 if __name__ == "__main__":
     unittest.main()
