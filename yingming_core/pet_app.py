@@ -164,6 +164,15 @@ class YingmingPetApp:
         )
         self.dialogue_state_label.pack(anchor="e")
 
+        self.topic_state_label = tk.Label(
+            status_panel,
+            text=self.topic_state_label_text(initial_state.get("topic_state")),
+            bg="#f7f1e8",
+            fg="#9a6f58",
+            font=("Microsoft YaHei UI", 8),
+        )
+        self.topic_state_label.pack(anchor="e")
+
         self.portrait_slot = tk.Frame(shell, width=196, height=196, bg="#f7f1e8")
         self.portrait_slot.pack(pady=(8, 8))
         self.portrait_slot.pack_propagate(False)
@@ -353,13 +362,31 @@ class YingmingPetApp:
         mood_label = MOOD_LABELS.get(str(state.get("mood") or "normal"), "自然")
         return f"{state_label} · {mood_label}"
 
+    def topic_state_label_text(self, state: dict[str, Any] | None = None) -> str:
+        if not isinstance(state, dict):
+            state = self.service.state().get("topic_state", {})
+        title = str(state.get("title") or "").strip()
+        status = str(state.get("status") or "closed")
+        if not title or status == "closed":
+            return "话题：空"
+        status_label = {
+            "open": "进行中",
+            "waiting_user": "等你",
+            "paused": "暂停",
+        }.get(status, status)
+        return f"{compact_label(title, 18)} · {status_label}"
+
     def refresh_mode_label(self) -> None:
         state = self.service.state()
         self.mode_label.configure(text=self.model_label_text(state))
         self.apply_dialogue_visual(state.get("dialogue_state"), pulse=False)
+        self.update_topic_state_label(state.get("topic_state"))
 
     def update_dialogue_state_label(self, state: dict[str, Any] | None) -> None:
         self.apply_dialogue_visual(state)
+
+    def update_topic_state_label(self, state: dict[str, Any] | None) -> None:
+        self.topic_state_label.configure(text=self.topic_state_label_text(state))
 
     def apply_dialogue_visual(self, state: dict[str, Any] | None, pulse: bool = True) -> None:
         if not isinstance(state, dict):
@@ -374,6 +401,7 @@ class YingmingPetApp:
             fg=style["label"],
         )
         self.mode_label.configure(fg=style["label"])
+        self.topic_state_label.configure(fg=style["label"])
         self.portrait_frame.configure(bg=style["accent"])
         self.bubble.configure(bg=style["bubble"])
         self.input_box.configure(bg=style["bubble"])
@@ -415,6 +443,7 @@ class YingmingPetApp:
                     "memories_added": result.get("memories_added", []),
                     "memory_suggestions": result.get("memory_suggestions", []),
                     "dialogue_state": result.get("dialogue_state", {}),
+                    "topic_state": result.get("topic_state", {}),
                 }
             )
         except Exception as exc:  # noqa: BLE001 - show local prototype errors in UI.
@@ -456,6 +485,7 @@ class YingmingPetApp:
                 reply = f"{reply}\n\n（我整理了 {len(memory_suggestions)} 条待确认记忆，点“记忆体”确认。）"
             self.set_bubble(reply)
             self.update_dialogue_state_label(result.get("dialogue_state"))
+            self.update_topic_state_label(result.get("topic_state"))
             self.refresh_mode_label()
         else:
             self.set_bubble(f"这里暂时没有接好：{result['reply']}")
@@ -506,6 +536,7 @@ class YingmingPetApp:
 
         self.set_bubble(message)
         self.update_dialogue_state_label(result.get("dialogue_state"))
+        self.update_topic_state_label(result.get("topic_state"))
         self.last_proactive_at = now
         self.proactive_sequence += 1
 
@@ -520,6 +551,7 @@ class YingmingPetApp:
         self.last_proactive_at = time.monotonic()
         self.set_bubble("好，我等你回答。刚才的话题我先捧着，不往别处跑。")
         self.update_dialogue_state_label({"label": "等你回答", "mood": "waiting"})
+        self.update_topic_state_label({"title": "刚才的话题", "status": "paused"})
 
     def send_system_message(self, text: str) -> None:
         self.mark_user_activity()
@@ -527,6 +559,7 @@ class YingmingPetApp:
         self.is_waiting = True
         self.set_busy(True)
         self.update_dialogue_state_label({"label": "回到话题", "mood": "thinking"})
+        self.update_topic_state_label({"title": "刚才的话题", "status": "open"})
         self.set_bubble("我把话题捡回来。")
         threading.Thread(target=self.reply_worker, args=(text,), daemon=True).start()
 
@@ -1432,3 +1465,10 @@ class YingmingPetApp:
 
 def run_pet(project_root: Path, topmost: bool = True) -> None:
     YingmingPetApp(project_root, topmost=topmost).run()
+
+
+def compact_label(text: str, limit: int) -> str:
+    compact = " ".join(str(text).split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: max(0, limit - 1)].rstrip() + "..."

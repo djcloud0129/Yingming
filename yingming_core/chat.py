@@ -8,6 +8,7 @@ from yingming_core.dialogue_state import detect_dialogue_state
 from yingming_core.greetings import current_greeting
 from yingming_core.llm import LLMError, Message, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
+from yingming_core.topic_state import detect_topic_state
 
 
 HELP_TEXT = """可用指令：
@@ -94,6 +95,7 @@ def run_chat(project_root: Path) -> None:
                 recent_messages,
                 memory.load(),
             ).as_prompt_text(),
+            topic_state_text=detect_topic_state(recent_messages, user_text).as_prompt_text(),
         )
         try:
             reply = client.complete(messages) if client.available else offline.complete(messages)
@@ -118,6 +120,7 @@ def build_messages(
     user_text: str,
     active_model: str = "",
     dialogue_state_text: str = "",
+    topic_state_text: str = "",
 ) -> list[Message]:
     system = "\n\n".join(
         part
@@ -138,6 +141,7 @@ def build_messages(
                 "亲近要自然克制，有分寸地陪伴用户。"
             ),
             dialogue_state_text,
+            topic_state_text,
             "请优先使用中文。回答自然、温柔、具体，不要长篇说教。",
         ]
         if part

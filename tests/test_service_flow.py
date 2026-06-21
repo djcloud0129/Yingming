@@ -30,6 +30,19 @@ class ServiceFlowTests(unittest.TestCase):
 
             self.assertEqual(service.current_dialogue_state().key, "waiting_reply")
 
+    def test_proactive_nudge_is_silent_when_topic_is_open(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            service = YingmingService(root)
+            append_history(service.history_path, "user", "我们聊聊电影")
+            append_history(service.history_path, "assistant", "《降临》和《银翼杀手2049》的气质都很安静。")
+
+            result = service.proactive_nudge()
+
+            self.assertEqual(result["message"], "")
+            self.assertTrue(result["topic_open"])
+            self.assertEqual(result["topic_state"]["kind"], "movie")
+
     def test_proactive_nudge_returns_dialogue_state_mood(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
