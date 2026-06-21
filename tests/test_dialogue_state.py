@@ -4,7 +4,11 @@ from datetime import datetime
 import unittest
 
 from yingming_core.chat import build_messages
-from yingming_core.dialogue_state import detect_dialogue_state
+from yingming_core.dialogue_state import (
+    assistant_is_waiting_for_user,
+    conversation_waiting_for_user,
+    detect_dialogue_state,
+)
 
 
 class DialogueStateTests(unittest.TestCase):
@@ -37,6 +41,34 @@ class DialogueStateTests(unittest.TestCase):
         messages = build_messages("", "", "", [], "我有点累", dialogue_state_text=prompt)
         self.assertIn("当前临时对话状态", messages[0]["content"])
         self.assertIn("陪伴模式", messages[0]["content"])
+
+    def test_detects_wait_command(self) -> None:
+        state = detect_dialogue_state("等我一下，我想想")
+        self.assertEqual(state.key, "waiting_reply")
+
+    def test_detects_return_topic_command(self) -> None:
+        state = detect_dialogue_state("回到刚才话题")
+        self.assertEqual(state.key, "topic_return")
+
+    def test_assistant_question_waits_for_user(self) -> None:
+        self.assertTrue(assistant_is_waiting_for_user("看过吗？还是我说中你没看过？"))
+
+    def test_assistant_waiting_sentence_waits_for_user(self) -> None:
+        self.assertTrue(assistant_is_waiting_for_user("去吧，等你回来告诉我感受。"))
+
+    def test_conversation_waiting_for_user(self) -> None:
+        messages = [
+            {"role": "user", "content": "我没看过哦"},
+            {"role": "assistant", "content": "等你回来告诉我感受。"},
+        ]
+        self.assertTrue(conversation_waiting_for_user(messages))
+
+    def test_conversation_not_waiting_after_user_replies(self) -> None:
+        messages = [
+            {"role": "assistant", "content": "你看过吗？"},
+            {"role": "user", "content": "我没看过"},
+        ]
+        self.assertFalse(conversation_waiting_for_user(messages))
 
 
 if __name__ == "__main__":

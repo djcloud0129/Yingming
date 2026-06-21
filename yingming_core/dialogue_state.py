@@ -65,6 +65,16 @@ STATES: dict[str, DialogueState] = {
         "记忆待确认",
         "温柔提醒有待确认记忆；不要把待确认内容当作事实使用。",
     ),
+    "waiting_reply": DialogueState(
+        "waiting_reply",
+        "等你回答",
+        "上一轮已经把话题递给用户；保持安静等待，不主动开启新话题。",
+    ),
+    "topic_return": DialogueState(
+        "topic_return",
+        "回到话题",
+        "用户想回到刚才的话题；优先延续最近未完成的对话，不转向项目或长期记忆。",
+    ),
     "casual": DialogueState(
         "casual",
         "自然闲聊",
@@ -149,6 +159,49 @@ CLARIFY_PATTERNS = (
     "呢?",
 )
 
+WAIT_COMMANDS = (
+    "等我一下",
+    "等一下",
+    "先等等",
+    "我想想",
+    "让我想想",
+    "等我回答",
+    "先别说",
+    "先别开新话题",
+)
+
+RETURN_TOPIC_COMMANDS = (
+    "回到刚才",
+    "回到上个话题",
+    "回到上一话题",
+    "继续刚才",
+    "继续上个话题",
+    "刚才那个",
+    "接着刚才",
+    "别换话题",
+    "回到电影",
+)
+
+WAITING_REPLY_MARKERS = (
+    "?",
+    "？",
+    "你觉得",
+    "你想",
+    "你要不要",
+    "要不要",
+    "有没有",
+    "看过吗",
+    "说说看",
+    "告诉我",
+    "等你",
+    "你愿意",
+    "你喜欢",
+    "你当时",
+    "你第一次",
+    "还是我",
+    "还是说",
+)
+
 
 def detect_dialogue_state(
     user_text: str = "",
@@ -163,6 +216,10 @@ def detect_dialogue_state(
     pending = memory_data.get("pending", [])
     pending_count = len(pending) if isinstance(pending, list) else 0
 
+    if is_return_to_topic_command(text):
+        return STATES["topic_return"]
+    if is_wait_command(text):
+        return STATES["waiting_reply"]
     if any(word in lower or word in text for word in CONCISE_WORDS):
         return STATES["concise"]
     if any(word in lower or word in text for word in MEMORY_WORDS):
@@ -178,6 +235,42 @@ def detect_dialogue_state(
     if is_under_specified(text, recent_messages or []):
         return STATES["clarify"]
     return STATES["casual"]
+
+
+def is_wait_command(text: str) -> bool:
+    compact = normalize_text(text)
+    return any(command in compact for command in WAIT_COMMANDS)
+
+
+def is_return_to_topic_command(text: str) -> bool:
+    compact = normalize_text(text)
+    return any(command in compact for command in RETURN_TOPIC_COMMANDS)
+
+
+def conversation_waiting_for_user(messages: list[dict[str, str]]) -> bool:
+    for message in reversed(messages):
+        role = message.get("role")
+        content = str(message.get("content", "")).strip()
+        if not content:
+            continue
+        if role == "assistant":
+            return assistant_is_waiting_for_user(content)
+        if role == "user":
+            return False
+    return False
+
+
+def assistant_is_waiting_for_user(text: str) -> bool:
+    compact = normalize_text(text)
+    if not compact:
+        return False
+    if any(marker in compact for marker in WAITING_REPLY_MARKERS):
+        return True
+    return compact.endswith(("吗", "呢", "嘛", "吧"))
+
+
+def normalize_text(text: str) -> str:
+    return " ".join(str(text).strip().split()).lower()
 
 
 def is_under_specified(text: str, recent_messages: list[dict[str, str]]) -> bool:

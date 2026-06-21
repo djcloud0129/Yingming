@@ -42,6 +42,7 @@ class YingmingPetApp:
         self.is_profile_refreshing = False
         self.is_welcome_refreshing = False
         self.has_user_interacted = False
+        self.manual_waiting_for_reply = False
         self.is_collapsed = False
         self.last_activity_at = time.monotonic()
         self.last_proactive_at = 0.0
@@ -60,6 +61,9 @@ class YingmingPetApp:
 
         self.menu = tk.Menu(self.root, tearoff=0)
         self.menu.add_command(label="展开聊天", command=self.restore_full_window)
+        self.menu.add_command(label="回到刚才话题", command=self.return_to_previous_topic)
+        self.menu.add_command(label="等我回答", command=self.pause_for_user_reply)
+        self.menu.add_separator()
         self.menu.add_command(label="打开记忆体", command=self.ask_memory)
         self.menu.add_command(label="连接 DeepSeek", command=self.open_connection_settings)
         self.menu.add_command(label="编辑用户画像", command=self.open_profile_editor)
@@ -303,6 +307,7 @@ class YingmingPetApp:
             return
 
         self.mark_user_activity()
+        self.manual_waiting_for_reply = False
         self.is_waiting = True
         self.input_var.set("")
         self.set_busy(True)
@@ -392,6 +397,8 @@ class YingmingPetApp:
         cooldown_seconds = PROACTIVE_COOLDOWN_SECONDS.get(mode)
         if idle_seconds is None or cooldown_seconds is None:
             return
+        if self.manual_waiting_for_reply:
+            return
         if self.is_waiting or self.is_collapsed or self.input_var.get().strip():
             return
         if self.has_open_child_window():
@@ -411,6 +418,26 @@ class YingmingPetApp:
         self.set_bubble(message)
         self.last_proactive_at = now
         self.proactive_sequence += 1
+
+    def return_to_previous_topic(self) -> None:
+        if self.is_waiting:
+            return
+        self.send_system_message("回到刚才话题")
+
+    def pause_for_user_reply(self) -> None:
+        self.mark_user_activity()
+        self.manual_waiting_for_reply = True
+        self.last_proactive_at = time.monotonic()
+        self.set_bubble("好，我等你回答。刚才的话题我先捧着，不往别处跑。")
+        self.update_dialogue_state_label({"label": "等你回答"})
+
+    def send_system_message(self, text: str) -> None:
+        self.mark_user_activity()
+        self.manual_waiting_for_reply = False
+        self.is_waiting = True
+        self.set_busy(True)
+        self.set_bubble("我把话题捡回来。")
+        threading.Thread(target=self.reply_worker, args=(text,), daemon=True).start()
 
     def has_open_child_window(self) -> bool:
         return any(isinstance(child, tk.Toplevel) and child.winfo_exists() for child in self.root.winfo_children())

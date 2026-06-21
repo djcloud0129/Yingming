@@ -6,7 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
-from yingming_core.dialogue_state import DialogueState, detect_dialogue_state
+from yingming_core.dialogue_state import (
+    DialogueState,
+    assistant_is_waiting_for_user,
+    conversation_waiting_for_user,
+    detect_dialogue_state,
+    is_wait_command,
+    STATES,
+)
 from yingming_core.greetings import contextual_welcome_text, proactive_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
@@ -62,6 +69,8 @@ class YingmingService:
             if message.get("role") == "user":
                 last_user = str(message.get("content", ""))
                 break
+        if conversation_waiting_for_user(recent_messages):
+            return STATES["waiting_reply"]
         return detect_dialogue_state(last_user, recent_messages, memory_data)
 
     def welcome(self, use_model: bool = False) -> dict[str, Any]:
@@ -92,6 +101,8 @@ class YingmingService:
             limit=8,
             drop_offline_placeholders=self.client.available,
         )
+        if conversation_waiting_for_user(recent_messages):
+            return {"message": "", "mode": mode, "waiting_for_user": True}
         message = proactive_text(
             self.memory.load(),
             recent_messages,
@@ -151,6 +162,20 @@ class YingmingService:
             limit=12,
             drop_offline_placeholders=self.client.available,
         )
+        if is_wait_command(user_text):
+            dialogue_state = STATES["waiting_reply"]
+            assistant_text = "好，我等你。你慢慢想，我不会自己把话题岔开。"
+            append_history(self.history_path, "user", user_text)
+            append_history(self.history_path, "assistant", assistant_text)
+            return {
+                "reply": assistant_text,
+                "mode": "local",
+                "memories_added": [],
+                "memory_suggestions": [],
+                "history": load_recent_history(self.history_path, limit=80),
+                "dialogue_state": dialogue_state.as_dict(),
+            }
+
         memory_data = self.memory.load()
         dialogue_state = detect_dialogue_state(user_text, recent_messages, memory_data)
         messages = build_messages(
@@ -177,6 +202,7 @@ class YingmingService:
         append_history(self.history_path, "user", user_text)
         append_history(self.history_path, "assistant", assistant_text)
         memory_suggestions = self.suggest_memories_from_turn(user_text, assistant_text) if mode == "online" else []
+        display_state = STATES["waiting_reply"] if assistant_is_waiting_for_user(assistant_text) else dialogue_state
 
         return {
             "reply": assistant_text,
@@ -184,7 +210,7 @@ class YingmingService:
             "memories_added": [],
             "memory_suggestions": [item.__dict__ for item in memory_suggestions],
             "history": load_recent_history(self.history_path, limit=80),
-            "dialogue_state": dialogue_state.as_dict(),
+            "dialogue_state": display_state.as_dict(),
         }
 
     def remember(self, text: str, category: str = "manual", refresh_profile: bool = True) -> dict[str, Any]:
