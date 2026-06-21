@@ -12,6 +12,11 @@ DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash"
+PROACTIVE_MODE_LABELS = {
+    "quiet": "安静陪着",
+    "normal": "正常主动",
+    "warm": "稍微黏一点",
+}
 
 
 @dataclass(frozen=True)
@@ -23,6 +28,7 @@ class ModelSettings:
     temperature: float = 0.8
     auto_memory: bool = True
     auto_profile: bool = True
+    proactive_mode: str = "normal"
     deepseek_thinking: str = "disabled"
     deepseek_reasoning_effort: str = "high"
 
@@ -63,6 +69,7 @@ def load_model_settings(project_root: Path | None = None) -> ModelSettings:
         "temperature": os.getenv("YINGMING_TEMPERATURE"),
         "auto_memory": os.getenv("YINGMING_AUTO_MEMORY"),
         "auto_profile": os.getenv("YINGMING_AUTO_PROFILE"),
+        "proactive_mode": os.getenv("YINGMING_PROACTIVE_MODE"),
         "deepseek_thinking": os.getenv("DEEPSEEK_THINKING"),
         "deepseek_reasoning_effort": os.getenv("DEEPSEEK_REASONING_EFFORT"),
     }
@@ -111,6 +118,7 @@ def deepseek_default_settings(api_key: str = "") -> ModelSettings:
         temperature=0.8,
         auto_memory=True,
         auto_profile=True,
+        proactive_mode="normal",
         deepseek_thinking="disabled",
         deepseek_reasoning_effort="high",
     )
@@ -140,6 +148,7 @@ def _coerce_settings(values: dict[str, Any]) -> ModelSettings:
     temperature = _coerce_float(values.get("temperature"), default=0.8)
     auto_memory = _coerce_bool(values.get("auto_memory"), default=True)
     auto_profile = _coerce_bool(values.get("auto_profile"), default=True)
+    proactive_mode = _coerce_proactive_mode(values.get("proactive_mode"))
     deepseek_thinking = str(values.get("deepseek_thinking") or "disabled").strip().lower()
     if deepseek_thinking not in {"enabled", "disabled", "auto"}:
         deepseek_thinking = "disabled"
@@ -155,6 +164,7 @@ def _coerce_settings(values: dict[str, Any]) -> ModelSettings:
         temperature=temperature,
         auto_memory=auto_memory,
         auto_profile=auto_profile,
+        proactive_mode=proactive_mode,
         deepseek_thinking=deepseek_thinking,
         deepseek_reasoning_effort=deepseek_reasoning_effort,
     )
@@ -178,6 +188,21 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     if text in {"0", "false", "no", "off", "n"}:
         return False
     return default
+
+
+def _coerce_proactive_mode(value: Any) -> str:
+    text = str(value or "normal").strip().lower()
+    aliases = {
+        "off": "quiet",
+        "silent": "quiet",
+        "none": "quiet",
+        "normal": "normal",
+        "default": "normal",
+        "warm": "warm",
+        "chatty": "warm",
+        "clingy": "warm",
+    }
+    return aliases.get(text, text if text in PROACTIVE_MODE_LABELS else "normal")
 
 
 def _env_any(*names: str) -> bool:

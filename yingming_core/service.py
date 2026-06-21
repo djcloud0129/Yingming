@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from yingming_core.chat import append_history, build_messages, current_time_context, load_recent_history
-from yingming_core.greetings import contextual_welcome_text
+from yingming_core.greetings import contextual_welcome_text, proactive_text
 from yingming_core.llm import LLMError, OfflineYingming, OpenAICompatibleClient
 from yingming_core.memory import MemoryStore
 from yingming_core.settings import (
@@ -65,6 +65,24 @@ class YingmingService:
             return {"welcome": fallback, "mode": "fallback", "error": str(exc)}
 
         return {"welcome": welcome or fallback, "mode": "online"}
+
+    def proactive_nudge(self, sequence: int = 0) -> dict[str, Any]:
+        mode = self.client.settings.proactive_mode
+        if mode == "quiet":
+            return {"message": "", "mode": mode}
+
+        recent_messages = load_recent_history(
+            self.history_path,
+            limit=8,
+            drop_offline_placeholders=self.client.available,
+        )
+        message = proactive_text(
+            self.memory.load(),
+            recent_messages,
+            mode=mode,
+            sequence=sequence,
+        )
+        return {"message": message, "mode": mode}
 
     def build_online_welcome(
         self,

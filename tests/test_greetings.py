@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 import unittest
 
-from yingming_core.greetings import contextual_welcome_text, greeting_for_hour, welcome_text
+from yingming_core.greetings import contextual_welcome_text, greeting_for_hour, proactive_text, welcome_text
 
 
 class GreetingTests(unittest.TestCase):
@@ -43,6 +43,24 @@ class GreetingTests(unittest.TestCase):
         text = contextual_welcome_text({}, recent, datetime(2026, 6, 21, 15, 0))
         self.assertIn("上次的话题我还留着", text)
         self.assertNotIn("我女朋友叫什么", text)
+
+    def test_proactive_quiet_mode_is_silent(self) -> None:
+        text = proactive_text({}, [], mode="quiet", now=datetime(2026, 6, 21, 15, 0))
+        self.assertEqual(text, "")
+
+    def test_proactive_mentions_pending_memories_first(self) -> None:
+        memory = {"pending": [{"text": "用户喜欢简洁回答。"}]}
+        text = proactive_text(memory, [], mode="normal", now=datetime(2026, 6, 21, 15, 0))
+        self.assertIn("1 条记忆没确认", text)
+
+    def test_proactive_has_late_night_nudge(self) -> None:
+        text = proactive_text({}, [], mode="normal", now=datetime(2026, 6, 21, 23, 30))
+        self.assertIn("夜深了", text)
+
+    def test_proactive_continues_project_topic(self) -> None:
+        recent = [{"role": "user", "content": "下一步我们做主动行为中枢"}]
+        text = proactive_text({}, recent, mode="warm", now=datetime(2026, 6, 21, 15, 0))
+        self.assertIn("主动行为中枢", text)
 
 
 if __name__ == "__main__":

@@ -65,6 +65,46 @@ def contextual_welcome_text(
     return "".join(parts)
 
 
+def proactive_text(
+    memory_data: dict[str, Any] | None = None,
+    recent_messages: list[dict[str, str]] | None = None,
+    mode: str = "normal",
+    now: datetime | None = None,
+    sequence: int = 0,
+) -> str:
+    if mode == "quiet":
+        return ""
+
+    memory_data = memory_data or {}
+    recent_messages = recent_messages or []
+    current = now if now is not None else datetime.now().astimezone()
+    pending = memory_data.get("pending", [])
+    pending_count = len(pending) if isinstance(pending, list) else 0
+
+    if pending_count:
+        return f"我这里还有 {pending_count} 条记忆没确认。等你方便，我们看一眼就好，别让我记错你。"
+
+    if current.hour >= 23 or current.hour < 5:
+        return "夜深了。今天不用把所有事都做完，我们留一个很小的收尾就好。"
+
+    last_user = latest_user_message(recent_messages)
+    if last_user and is_project_like(last_user):
+        topic = compact_text(last_user, 30)
+        variants = [
+            f"我还在想刚才的“{topic}”。要不要把下一步落到一个很小的清单里？",
+            f"关于“{topic}”，我觉得可以先抓一个最小动作。你想让我帮你拆一下吗？",
+        ]
+        return variants[sequence % len(variants)]
+
+    project_hint = latest_project_hint(memory_data)
+    if project_hint:
+        return f"我还记得我们在推进：{compact_text(project_hint, 34)}。今天往前挪一小步也算数。"
+
+    if mode == "warm":
+        return "我还在旁边。你不用急着说话；想继续的时候，我会接住。"
+    return "我还在。你想继续做樱茗，还是先安静一会儿？"
+
+
 def latest_user_message(messages: list[dict[str, str]]) -> str:
     for message in reversed(messages):
         if message.get("role") == "user":
@@ -100,6 +140,8 @@ def is_project_like(text: str) -> bool:
         "界面",
         "时间",
         "问候",
+        "主动",
+        "中枢",
         "vtuber",
         "live2d",
         "项目",

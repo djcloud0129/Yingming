@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import time
 import tkinter as tk
 from tkinter import messagebox
 from dataclasses import replace
@@ -11,7 +12,7 @@ from typing import Any
 
 from yingming_core.memory import MEMORY_CATEGORIES
 from yingming_core.service import YingmingService
-from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL
+from yingming_core.settings import DEFAULT_DEEPSEEK_BASE_URL, DEFAULT_DEEPSEEK_MODEL, PROACTIVE_MODE_LABELS
 
 
 FULL_WINDOW_GEOMETRY = "340x600+920+160"
@@ -20,6 +21,15 @@ FULL_WINDOW_MIN_SIZE = (340, 600)
 COLLAPSED_WINDOW_GEOMETRY = "220x340"
 COLLAPSED_WINDOW_MIN_SIZE = (220, 340)
 PORTRAIT_MAX_SIZE = 180
+PROACTIVE_CHECK_MS = 30_000
+PROACTIVE_IDLE_SECONDS = {
+    "normal": 5 * 60,
+    "warm": 2 * 60,
+}
+PROACTIVE_COOLDOWN_SECONDS = {
+    "normal": 10 * 60,
+    "warm": 4 * 60,
+}
 
 
 class YingmingPetApp:
@@ -33,6 +43,9 @@ class YingmingPetApp:
         self.is_welcome_refreshing = False
         self.has_user_interacted = False
         self.is_collapsed = False
+        self.last_activity_at = time.monotonic()
+        self.last_proactive_at = 0.0
+        self.proactive_sequence = 0
         self.drag_start_x = 0
         self.drag_start_y = 0
 
@@ -59,6 +72,7 @@ class YingmingPetApp:
         self.root.bind("<Button-3>", self.show_menu)
         self.root.after(120, self.poll_response_queue)
         self.root.after(350, self.start_welcome_refresh)
+        self.root.after(PROACTIVE_CHECK_MS, self.poll_proactive_behavior)
 
     def build_ui(self) -> None:
         shell = tk.Frame(self.root, bg="#f7f1e8", padx=12, pady=12)
@@ -163,6 +177,7 @@ class YingmingPetApp:
         )
         self.input_box.pack(side="left", fill="x", expand=True, ipady=8)
         self.input_box.bind("<Return>", lambda _event: self.send_message())
+        self.input_box.bind("<KeyRelease>", lambda _event: self.mark_user_activity())
 
         self.send_button = tk.Button(
             self.input_frame,
@@ -264,7 +279,7 @@ class YingmingPetApp:
         if not text or self.is_waiting:
             return
 
-        self.has_user_interacted = True
+        self.mark_user_activity()
         self.is_waiting = True
         self.input_var.set("")
         self.set_busy(True)
@@ -335,6 +350,45 @@ class YingmingPetApp:
         if not busy:
             self.input_box.focus_set()
 
+    def mark_user_activity(self) -> None:
+        self.has_user_interacted = True
+        self.last_activity_at = time.monotonic()
+
+    def poll_proactive_behavior(self) -> None:
+        try:
+            self.maybe_show_proactive_nudge()
+        finally:
+            self.root.after(PROACTIVE_CHECK_MS, self.poll_proactive_behavior)
+
+    def maybe_show_proactive_nudge(self) -> None:
+        mode = self.service.client.settings.proactive_mode
+        idle_seconds = PROACTIVE_IDLE_SECONDS.get(mode)
+        cooldown_seconds = PROACTIVE_COOLDOWN_SECONDS.get(mode)
+        if idle_seconds is None or cooldown_seconds is None:
+            return
+        if self.is_waiting or self.is_collapsed or self.input_var.get().strip():
+            return
+        if self.has_open_child_window():
+            return
+
+        now = time.monotonic()
+        if now - self.last_activity_at < idle_seconds:
+            return
+        if now - self.last_proactive_at < cooldown_seconds:
+            return
+
+        result = self.service.proactive_nudge(sequence=self.proactive_sequence)
+        message = str(result.get("message", "")).strip()
+        if not message:
+            return
+
+        self.set_bubble(message)
+        self.last_proactive_at = now
+        self.proactive_sequence += 1
+
+    def has_open_child_window(self) -> bool:
+        return any(isinstance(child, tk.Toplevel) and child.winfo_exists() for child in self.root.winfo_children())
+
     def start_welcome_refresh(self) -> None:
         if self.is_welcome_refreshing or not self.service.client.available:
             return
@@ -375,7 +429,7 @@ class YingmingPetApp:
             self.response_queue.put({"type": "profile_refresh", "ok": False, "error": str(exc)})
 
     def ask_memory(self) -> None:
-        self.has_user_interacted = True
+        self.mark_user_activity()
         window = tk.Toplevel(self.root)
         window.title("记忆体管理器")
         window.geometry("760x620+620+80")
@@ -823,15 +877,15 @@ class YingmingPetApp:
         editor.focus_set()
 
     def open_connection_settings(self) -> None:
-        self.has_user_interacted = True
+        self.mark_user_activity()
         settings = self.service.client.settings
         if not settings.is_deepseek:
             settings = self.service.deepseek_defaults(api_key=settings.api_key)
 
         window = tk.Toplevel(self.root)
         window.title("连接 DeepSeek")
-        window.geometry("520x560+760+100")
-        window.minsize(520, 560)
+        window.geometry("520x640+760+80")
+        window.minsize(520, 640)
         window.resizable(True, False)
         window.configure(bg="#f7f1e8")
         window.attributes("-topmost", self.topmost)
@@ -908,6 +962,28 @@ class YingmingPetApp:
             font=("Microsoft YaHei UI", 10),
         ).grid(row=11, column=0, sticky="w", pady=(4, 0))
 
+        tk.Label(
+            form,
+            text="主动陪伴",
+            bg="#f7f1e8",
+            fg="#2d3230",
+            font=("Microsoft YaHei UI", 10, "bold"),
+        ).grid(row=12, column=0, sticky="w", pady=(10, 3))
+        proactive_label_to_mode = {label: mode for mode, label in PROACTIVE_MODE_LABELS.items()}
+        proactive_mode_var = tk.StringVar(
+            value=PROACTIVE_MODE_LABELS.get(settings.proactive_mode, PROACTIVE_MODE_LABELS["normal"])
+        )
+        proactive_menu = tk.OptionMenu(form, proactive_mode_var, *PROACTIVE_MODE_LABELS.values())
+        proactive_menu.configure(
+            bg="#fffaf2",
+            fg="#2d3230",
+            activebackground="#f2e8dc",
+            relief="solid",
+            bd=1,
+            font=("Microsoft YaHei UI", 10),
+        )
+        proactive_menu.grid(row=13, column=0, sticky="ew")
+
         buttons = tk.Frame(window, bg="#f7f1e8")
         buttons.pack(side="bottom", fill="x", padx=12, pady=(0, 12))
 
@@ -933,10 +1009,13 @@ class YingmingPetApp:
                 temperature=temperature,
                 auto_memory=auto_memory_var.get(),
                 auto_profile=auto_profile_var.get(),
+                proactive_mode=proactive_label_to_mode.get(proactive_mode_var.get(), "normal"),
                 deepseek_thinking="enabled" if thinking_var.get() else "disabled",
             )
             self.service.save_model_settings(new_settings)
             self.refresh_mode_label()
+            self.last_activity_at = time.monotonic()
+            self.last_proactive_at = time.monotonic()
             self.set_bubble("DeepSeek 已保存。你可以直接和我说话，我会带着记忆体一起回应。")
             window.destroy()
 
@@ -981,7 +1060,7 @@ class YingmingPetApp:
         api_key_entry.focus_set()
 
     def open_profile_editor(self) -> None:
-        self.has_user_interacted = True
+        self.mark_user_activity()
         window = tk.Toplevel(self.root)
         window.title("用户画像")
         window.geometry("660x620+700+120")
@@ -1141,7 +1220,7 @@ class YingmingPetApp:
         generate_button.pack(side="left")
 
     def minimize_to_small_pet(self) -> None:
-        self.has_user_interacted = True
+        self.mark_user_activity()
         self.is_collapsed = True
         self.input_frame.pack_forget()
         self.actions.pack_forget()
@@ -1152,6 +1231,7 @@ class YingmingPetApp:
         self.root.geometry(COLLAPSED_WINDOW_GEOMETRY)
 
     def restore_full_window(self) -> None:
+        self.mark_user_activity()
         if not self.is_collapsed and self.input_frame.winfo_ismapped():
             return
         self.is_collapsed = False
@@ -1169,6 +1249,7 @@ class YingmingPetApp:
         self.input_box.focus_set()
 
     def toggle_topmost(self) -> None:
+        self.mark_user_activity()
         self.topmost = not self.topmost
         self.root.attributes("-topmost", self.topmost)
         self.set_bubble("我会继续待在最前面。" if self.topmost else "好，我先不挡着你。")
@@ -1181,12 +1262,14 @@ class YingmingPetApp:
         self.bubble.yview_moveto(0.0)
 
     def show_menu(self, event: tk.Event[Any]) -> None:
+        self.mark_user_activity()
         try:
             self.menu.tk_popup(event.x_root, event.y_root)
         finally:
             self.menu.grab_release()
 
     def start_drag(self, event: tk.Event[Any]) -> None:
+        self.mark_user_activity()
         self.drag_start_x = event.x
         self.drag_start_y = event.y
 
